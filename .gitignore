@@ -1,0 +1,20 @@
+# dependencies
+node_modules/
+
+# local environment
+.env
+.env.*
+!.env.example
+
+# build and test output
+dist/
+coverage/
+*.tsbuildinfo
+
+# logs
+*.log
+
+# macOS and editor files
+.DS_Store
+.vscode/
+.idea/
