@@ -1,5 +1,7 @@
 # omp-prompt-border-style
 
+![Preview](assets/preview.png)
+
 Prompt border styles for the oh-my-pi input editor.
 
 ## What this plugin does
