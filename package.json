@@ -1,25 +1,30 @@
 {
-  "name": "omp-prompt-border-style",
-  "version": "0.1.0",
-  "type": "module",
-  "description": "Prompt input border styles for oh-my-pi",
-  "license": "MIT",
-  "files": ["src", "README.md"],
-  "scripts": {
-    "check": "bun --bun tsc --noEmit",
-    "test": "bun test src/main.test.ts"
-  },
-  "peerDependencies": {
-    "@oh-my-pi/pi-coding-agent": ">=16.1.7",
-    "@oh-my-pi/pi-tui": ">=16.1.7"
-  },
-  "devDependencies": {
-    "@oh-my-pi/pi-coding-agent": ">=16.1.7",
-    "@oh-my-pi/pi-tui": ">=16.1.7",
-    "bun-types": "latest",
-    "typescript": "latest"
-  },
-  "omp": {
-    "extensions": ["./src/main.ts"]
-  }
+    "name": "@codesook/omp-prompt-border-style",
+    "version": "1.0.0",
+    "type": "module",
+    "description": "Prompt input border styles for oh-my-pi",
+    "license": "MIT",
+    "files": [
+        "src",
+        "README.md"
+    ],
+    "scripts": {
+        "check": "bun --bun tsc --noEmit",
+        "test": "bun test src/main.test.ts"
+    },
+    "peerDependencies": {
+        "@oh-my-pi/pi-coding-agent": ">=16.1.7",
+        "@oh-my-pi/pi-tui": ">=16.1.7"
+    },
+    "devDependencies": {
+        "@oh-my-pi/pi-coding-agent": ">=16.1.7",
+        "@oh-my-pi/pi-tui": ">=16.1.7",
+        "bun-types": "latest",
+        "typescript": "latest"
+    },
+    "omp": {
+        "extensions": [
+            "./src/main.ts"
+        ]
+    }
 }
