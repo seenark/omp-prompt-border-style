@@ -1,12 +1,22 @@
 import { describe, expect, test } from "bun:test";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { AutocompleteProvider, EditorTheme } from "@oh-my-pi/pi-tui";
 import promptBorderStyle, {
+	DEFAULT_PROMPT_BORDER_CONFIG,
+	EXAMPLE_PROMPT_BORDER_CONFIG,
 	PromptBorderEditor,
 	borderStyles,
+	ensurePromptBorderConfigFile,
 	getPromptBorderArgumentCompletions,
+	normalizePromptBorderConfig,
+	parseLeftGlyphFrames,
 	parsePromptBorderArgs,
+	readPromptBorderConfig,
 	renderBottomBorderLine,
+	replaceBodyLeftGlyph,
+	writePromptBorderConfigSelection,
 } from "./main";
 
 const symbols: EditorTheme["symbols"] = {
@@ -107,6 +117,10 @@ describe("parsePromptBorderArgs", () => {
 	});
 });
 
+test("parses left glyph frames from space separated text", () => {
+	expect(parseLeftGlyphFrames("AA  BB\nCC")).toEqual(["AA", "BB", "CC"]);
+});
+
 describe("PromptBorderEditor", () => {
 	test("renders a separate bottom border in bottom layout", () => {
 		const editor = new PromptBorderEditor(theme, { style: "double", layout: "bottom" });
@@ -179,6 +193,44 @@ describe("PromptBorderEditor", () => {
 		expect(lines).toEqual(["╔══════╗", "╚═ ▌  ═╝"]);
 	});
 
+	test("replaces only the body-left glyph", () => {
+		expect(replaceBodyLeftGlyph("╚═ ▌  ═╝", borderStyles.double, "AB")).toBe("╚AB▌  ═╝");
+		expect(replaceBodyLeftGlyph("╔══════╗", borderStyles.double, "AB")).toBe("╔══════╗");
+		expect(replaceBodyLeftGlyph("╚══════╝", borderStyles.double, "AB")).toBe("╚══════╝");
+	});
+
+	test("renders configured left glyph frame in default layout", () => {
+		const editor = new PromptBorderEditor(theme, { style: "double", layout: "default" }, {
+			style: "double",
+			layout: "default",
+			leftGlyph: { frameMs: 70, glyphs: "AB", frames: ["AB"] },
+		});
+		expect(editor.render(8)).toEqual(["╔══════╗", "╚AB▌  ═╝"]);
+	});
+
+	test("renders configured left glyph frame in full layout body row with input spacing", () => {
+		const editor = new PromptBorderEditor(theme, { style: "double", layout: "full" }, {
+			style: "double",
+			layout: "full",
+			leftGlyph: { frameMs: 70, glyphs: "AB", frames: ["AB"] },
+		});
+		expect(editor.render(8)).toEqual(["╔══════╗", "║AB ▌  ║", "╚══════╝"]);
+	});
+
+	test("advances the left glyph frame and requests repaint", async () => {
+		const repaints: number[] = [];
+		const editor = new PromptBorderEditor(theme, { style: "double", layout: "default" }, {
+			style: "double",
+			layout: "default",
+			leftGlyph: { frameMs: 1, glyphs: "AB CD", frames: ["AB", "CD"] },
+		});
+		editor.setShimmerRepaintHandler(() => repaints.push(1));
+		expect(editor.render(8)[1]).toBe("╚AB▌  ═╝");
+		await new Promise(resolve => setTimeout(resolve, 5));
+		expect(repaints.length).toBeGreaterThan(0);
+		expect(editor.render(8)[1]).toBe("╚CD▌  ═╝");
+	});
+
 	test("keeps the bottom border above autocomplete rows", async () => {
 		const editor = new PromptBorderEditor(theme, { style: "double", layout: "bottom" });
 		editor.setAutocompleteProvider(slashAutocomplete);
@@ -190,6 +242,93 @@ describe("PromptBorderEditor", () => {
 		expect(editor.isShowingAutocomplete()).toBe(true);
 		expect(borderIndex).toBeGreaterThanOrEqual(0);
 		expect(autocompleteIndex).toBeGreaterThan(borderIndex);
+	});
+});
+
+describe("prompt border config", () => {
+	test("normalizes prompt border config defaults without showing custom glyphs", () => {
+		expect(normalizePromptBorderConfig({})).toEqual(DEFAULT_PROMPT_BORDER_CONFIG);
+		expect(normalizePromptBorderConfig({ promptBorder: { leftGlyph: { frameMs: 10, glyphs: "" } } })).toEqual({
+			style: "double",
+			layout: "full",
+			leftGlyph: { frameMs: 70, glyphs: "", frames: [] },
+		});
+		expect(
+			normalizePromptBorderConfig({
+				promptBorder: { style: "round", layout: "default", leftGlyph: { frameMs: 80, glyphs: "AA  BB" } },
+			}),
+		).toEqual({
+			style: "round",
+			layout: "default",
+			leftGlyph: { frameMs: 80, glyphs: "AA  BB", frames: ["AA", "BB"] },
+		});
+	});
+
+	test("creates prompt border config json example when missing", async () => {
+		const dir = await import("node:fs/promises").then(fs => fs.mkdtemp(path.join(os.tmpdir(), "prompt-border-")));
+		const configPath = path.join(dir, "config.json");
+		const config = await ensurePromptBorderConfigFile(configPath);
+		expect(config.leftGlyph.frames.length).toBe(73);
+		expect(config).toEqual(EXAMPLE_PROMPT_BORDER_CONFIG);
+		const saved = JSON.parse(await Bun.file(configPath).text());
+		expect(saved.promptBorder.style).toBe("double");
+		expect(saved.promptBorder.layout).toBe("full");
+		expect(saved.promptBorder.leftGlyph.frameMs).toBe(70);
+		expect(saved.promptBorder.leftGlyph.glyphs.startsWith("􁦘􁦙")).toBe(true);
+		expect(saved.promptBorder.leftGlyph.glyphs.endsWith("􁨨􁨩")).toBe(true);
+		expect(saved.promptBorder.leftGlyph.frames).toBeUndefined();
+		expect(saved.promptBorder.leftGlyph.enabled).toBeUndefined();
+		expect(await readPromptBorderConfig(configPath)).toEqual(EXAMPLE_PROMPT_BORDER_CONFIG);
+	});
+
+	test("writes prompt border style and layout while preserving glyph config", async () => {
+		const dir = await import("node:fs/promises").then(fs => fs.mkdtemp(path.join(os.tmpdir(), "prompt-border-")));
+		const configPath = path.join(dir, "config.json");
+		await Bun.write(configPath, JSON.stringify({
+			theme: "keep-me",
+			promptBorder: {
+				style: "double",
+				layout: "full",
+				custom: "preserved",
+				leftGlyph: { frameMs: 80, glyphs: "" },
+			},
+		}, null, 2));
+
+		const config = await writePromptBorderConfigSelection({ style: "round", layout: "sides" }, configPath);
+		const saved = JSON.parse(await Bun.file(configPath).text());
+
+		expect(config).toEqual({
+			style: "round",
+			layout: "sides",
+			leftGlyph: { frameMs: 80, glyphs: "", frames: [] },
+		});
+		expect(saved.theme).toBe("keep-me");
+		expect(saved.promptBorder.style).toBe("round");
+		expect(saved.promptBorder.layout).toBe("sides");
+		expect(saved.promptBorder.custom).toBe("preserved");
+		expect(saved.promptBorder.leftGlyph).toEqual({ frameMs: 80, glyphs: "" });
+		expect(saved.promptBorder.leftGlyph.frames).toBeUndefined();
+		expect(saved.promptBorder.leftGlyph.enabled).toBeUndefined();
+	});
+
+	test("preserves welcome screen config when writing prompt border selection", async () => {
+		const dir = await import("node:fs/promises").then(fs => fs.mkdtemp(path.join(os.tmpdir(), "prompt-border-")));
+		const configPath = path.join(dir, "config.json");
+		await Bun.write(configPath, JSON.stringify({
+			welcomeScreen: { mainText: "Keep Me" },
+			promptBorder: {
+				style: "double",
+				layout: "full",
+				leftGlyph: { frameMs: 80, glyphs: "" },
+			},
+		}, null, 2));
+
+		await writePromptBorderConfigSelection({ style: "round", layout: "sides" }, configPath);
+		const saved = JSON.parse(await Bun.file(configPath).text());
+
+		expect(saved.welcomeScreen.mainText).toBe("Keep Me");
+		expect(saved.promptBorder.style).toBe("round");
+		expect(saved.promptBorder.layout).toBe("sides");
 	});
 });
 
@@ -221,6 +360,45 @@ describe("promptBorderStyle", () => {
 		await handler?.("round", ctx);
 
 		expect(notifications.at(-1)).toBe("Prompt border: round full");
+	});
+
+	test("command persists applied style and layout to the config file", async () => {
+		const dir = await import("node:fs/promises").then(fs => fs.mkdtemp(path.join(os.tmpdir(), "prompt-border-")));
+		const configPath = path.join(dir, "config.json");
+		await Bun.write(configPath, JSON.stringify({
+			promptBorder: {
+				style: "double",
+				layout: "full",
+				leftGlyph: { frameMs: 80, glyphs: "AA  BB" },
+			},
+		}, null, 2));
+		let handler: ((args: string, ctx: { hasUI: true; ui: { setEditorComponent: (value: unknown) => void; notify: (message: string, level?: string) => void } }) => Promise<void>) | undefined;
+		const notifications: string[] = [];
+		const pi = {
+			setLabel: () => {},
+			on: () => {},
+			registerCommand: (_name: string, command: { handler: typeof handler }) => {
+				handler = command.handler;
+			},
+		} as unknown as ExtensionAPI;
+		const ctx = {
+			hasUI: true as const,
+			ui: {
+				setEditorComponent: () => {},
+				notify: (message: string) => {
+					notifications.push(message);
+				},
+			},
+		};
+
+		promptBorderStyle(pi, configPath);
+		await handler?.("round sides", ctx);
+		const saved = JSON.parse(await Bun.file(configPath).text());
+
+		expect(saved.promptBorder.style).toBe("round");
+		expect(saved.promptBorder.layout).toBe("sides");
+		expect(saved.promptBorder.leftGlyph).toEqual({ frameMs: 80, glyphs: "AA  BB" });
+		expect(notifications.at(-1)).toBe("Prompt border: round sides");
 	});
 });
 

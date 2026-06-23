@@ -12,6 +12,7 @@ It customizes:
 - the top status-line border glyphs
 - the editor side borders
 - a synthetic bottom border for layouts that use one
+- a config-driven animated body-left glyph when glyph text is configured
 - slash-command argument completions for the command itself
 
 The default active state is:
@@ -79,6 +80,27 @@ If the arguments are invalid, the plugin shows the command usage string in the U
 - `default` — uses the upstream editor layout, restyled with the selected border glyph set
 
 For non-`default` layouts, the plugin inserts the synthetic bottom border before autocomplete rows so slash-command suggestions stay below the editor body.
+
+## Configuration
+
+The plugin reads optional settings from `~/.config/codesook-omp/config.json` and writes `style`/`layout` changes there when `/prompt-border` applies a new selection.
+
+`style` and `layout` set the initial prompt border. The same shared file may also contain a `welcomeScreen` section managed by `codesook-omp`; this plugin preserves that section when it updates `promptBorder`. The custom left glyph is disabled unless `promptBorder.leftGlyph.glyphs` contains text. Frames are written as one string separated by spaces. `/prompt-border reset` only resets the current editor component; it does not write a disabled state because the config schema has no disabled flag.
+
+```json
+{
+  "promptBorder": {
+    "style": "double",
+    "layout": "full",
+    "leftGlyph": {
+      "frameMs": 70,
+      "glyphs": "􁦘􁦙  􁦚􁦛"
+    }
+  }
+}
+```
+
+`glyphs` replaces only the first body-left horizontal glyph in rows shaped like OMP’s original `╰─` editor body prefix. It does not change border style, layout, side borders, top borders, or synthetic bottom borders. The plugin creates the file with the full example glyph text when it is missing.
 
 ## Examples
 
