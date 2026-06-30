@@ -588,13 +588,13 @@ export function getPromptLoadingGlyphArgumentCompletions(argumentPrefix: string)
 	const tokenPrefix = hasTrailingSpace ? "" : (parts.at(-1) ?? "");
 	if (parts.length === 0) return [{ value: "debug", label: "debug" }];
 	if (parts.length === 1) {
+		if (parts[0] === "debug") {
+			return LOADING_GLYPH_DEBUG_ACTIONS.map(action => ({ value: `debug ${action}`, label: action }));
+		}
 		if (!hasTrailingSpace) {
 			return LOADING_GLYPH_DEBUG_ROOT_OPTIONS
 				.filter(option => option.startsWith(tokenPrefix))
 				.map(option => ({ value: option, label: option }));
-		}
-		if (parts[0] === "debug") {
-			return LOADING_GLYPH_DEBUG_ACTIONS.map(action => ({ value: `debug ${action}`, label: action }));
 		}
 	}
 	if (parts[0] === "debug" && parts.length === 2 && !hasTrailingSpace) {

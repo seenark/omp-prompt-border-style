@@ -176,6 +176,14 @@ describe("getPromptLoadingGlyphArgumentCompletions", () => {
 			{ value: "debug off", label: "off" },
 		]);
 	});
+	test("offers debug actions for the exact debug token", () => {
+		expect(getPromptLoadingGlyphArgumentCompletions("debug")).toEqual([
+			{ value: "debug frames", label: "frames" },
+			{ value: "debug demo", label: "demo" },
+			{ value: "debug on", label: "on" },
+			{ value: "debug off", label: "off" },
+		]);
+	});
 });
 
 test("reports skipped frames for a 20ms activity spinner", () => {
