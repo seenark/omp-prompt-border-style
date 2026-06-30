@@ -1,8 +1,9 @@
-import { CustomEditor, type ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import { CustomEditor, type ExtensionAPI, type SpinnerType, type Theme } from "@oh-my-pi/pi-coding-agent";
 import { mkdir } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+	CURSOR_MARKER,
 	sliceByColumn,
 	truncateToWidth,
 	visibleWidth,
@@ -35,16 +36,23 @@ export type PromptBorderState = {
 	layout: BorderLayoutName;
 };
 
-export type PromptBorderLeftGlyphConfig = {
+export type PromptBorderGlyphConfig = {
 	frameMs: number;
 	glyphs: string;
 	frames: string[];
 };
 
+export type PromptBorderGlyphSide = "left" | "right";
+type PromptBorderSpinnerGlyphSlot = SpinnerType;
+type PromptBorderGlyphSlot = PromptBorderGlyphSide | PromptBorderSpinnerGlyphSlot;
+type PromptBorderSpinnerGlyphConfig = Record<PromptBorderSpinnerGlyphSlot, PromptBorderGlyphConfig>;
+
 export type PromptBorderConfig = {
 	style: BorderStyleName;
 	layout: BorderLayoutName;
-	leftGlyph: PromptBorderLeftGlyphConfig;
+	leftGlyph: PromptBorderGlyphConfig;
+	rightGlyph: PromptBorderGlyphConfig;
+	spinnerGlyphs: PromptBorderSpinnerGlyphConfig;
 };
 
 export type PromptBorderGlyphs = Pick<
@@ -74,31 +82,93 @@ const STYLE_NAMES = Object.keys(borderStyles) as BorderStyleName[];
 const LAYOUT_NAMES = ["full", "bottom", "sides", "top-bottom", "default"] as const;
 const PRIMARY_COMMAND_OPTIONS = [...STYLE_NAMES, "layout", "reset"] as const;
 const USAGE = `Usage: /prompt-border <${STYLE_NAMES.join("|")}> [full|bottom|sides|top-bottom|default] | /prompt-border layout <full|bottom|sides|top-bottom|default> | /prompt-border reset`;
-const DEFAULT_LEFT_GLYPH_FRAME_MS = 70;
+const DEFAULT_GLYPH_FRAME_MS = 70;
+const DEFAULT_SPINNER_GLYPH_FRAME_MS = 80;
+const HOST_SPINNER_FRAME_MS = 80;
+const SPINNER_GLYPH_SLOTS = ["status", "activity"] as const satisfies readonly SpinnerType[];
+const GLYPH_TEXT_FILE_NAMES: Record<PromptBorderGlyphSlot, string> = {
+	left: "prompt-border-left-glyphs.txt",
+	right: "prompt-border-right-glyphs.txt",
+	status: "prompt-border-status-spinner-glyphs.txt",
+	activity: "prompt-border-activity-spinner-glyphs.txt",
+};
+export const DEFAULT_LEFT_GLYPH_TEXT_PATH = path.join(
+	os.homedir(),
+	".config",
+	"codesook-omp",
+	GLYPH_TEXT_FILE_NAMES.left,
+);
+export const DEFAULT_RIGHT_GLYPH_TEXT_PATH = path.join(
+	os.homedir(),
+	".config",
+	"codesook-omp",
+	GLYPH_TEXT_FILE_NAMES.right,
+);
+export const DEFAULT_STATUS_SPINNER_GLYPH_TEXT_PATH = path.join(
+	os.homedir(),
+	".config",
+	"codesook-omp",
+	GLYPH_TEXT_FILE_NAMES.status,
+);
+export const DEFAULT_ACTIVITY_SPINNER_GLYPH_TEXT_PATH = path.join(
+	os.homedir(),
+	".config",
+	"codesook-omp",
+	GLYPH_TEXT_FILE_NAMES.activity,
+);
 
 export const CONFIG_PATH = path.join(os.homedir(), ".config", "codesook-omp", "config.json");
 
 export const DEFAULT_LEFT_GLYPH_TEXT =
 	"􁦘􁦙  􁦚􁦛  􁦜􁦝  􁦞􁦟  􁦠􁦡  􁦢􁦣  􁦤􁦥  􁦦􁦧  􁦨􁦩  􁦪􁦫  􁦬􁦭  􁦮􁦯  􁦰􁦱  􁦲􁦳  􁦴􁦵  􁦶􁦷  􁦸􁦹  􁦺􁦻  􁦼􁦽  􁦾􁦿  􁧀􁧁  􁧂􁧃  􁧄􁧅  􁧆􁧇  􁧈􁧉  􁧊􁧋  􁧌􁧍  􁧎􁧏  􁧐􁧑  􁧒􁧓  􁧔􁧕  􁧖􁧗  􁧘􁧙  􁧚􁧛  􁧜􁧝  􁧞􁧟  􁧠􁧡  􁧢􁧣  􁧤􁧥  􁧦􁧧  􁧨􁧩  􁧪􁧫  􁧬􁧭  􁧮􁧯  􁧰􁧱  􁧲􁧳  􁧴􁧵  􁧶􁧷  􁧸􁧹  􁧺􁧻  􁧼􁧽  􁧾􁧿  􁨀􁨁  􁨂􁨃  􁨄􁨅  􁨆􁨇  􁨈􁨉  􁨊􁨋  􁨌􁨍  􁨎􁨏  􁨐􁨑  􁨒􁨓  􁨔􁨕  􁨖􁨗  􁨘􁨙  􁨚􁨛  􁨜􁨝  􁨞􁨟  􁨠􁨡  􁨢􁨣  􁨤􁨥  􁨦􁨧  􁨨􁨩";
 
-export function parseLeftGlyphFrames(glyphs: string): string[] {
+export function parseGlyphFrames(glyphs: string): string[] {
 	return glyphs.trim().split(/\s+/u).filter(Boolean);
 }
+
+export function buildTimedSpinnerFrames(
+	frames: readonly string[],
+	frameMs: number,
+	hostFrameMs = HOST_SPINNER_FRAME_MS,
+): string[] {
+	if (frames.length === 0) return [];
+	const safeHostFrameMs = Number.isFinite(hostFrameMs) && hostFrameMs > 0 ? hostFrameMs : HOST_SPINNER_FRAME_MS;
+	const safeFrameMs =
+		Number.isFinite(frameMs) && frameMs >= 16 && frameMs <= 1000 ? frameMs : DEFAULT_SPINNER_GLYPH_FRAME_MS;
+	const hostFrameCount = Math.max(1, Math.round((frames.length * safeFrameMs) / safeHostFrameMs));
+	return Array.from({ length: hostFrameCount }, (_unused, hostFrameIndex) => {
+		const sourceFrameIndex = Math.floor((hostFrameIndex * safeHostFrameMs) / safeFrameMs) % frames.length;
+		return frames[sourceFrameIndex];
+	});
+}
+
+const emptySpinnerGlyphConfig = (): PromptBorderSpinnerGlyphConfig => ({
+	status: { frameMs: DEFAULT_SPINNER_GLYPH_FRAME_MS, glyphs: "", frames: [] },
+	activity: { frameMs: DEFAULT_SPINNER_GLYPH_FRAME_MS, glyphs: "", frames: [] },
+});
 
 export const DEFAULT_PROMPT_BORDER_CONFIG: PromptBorderConfig = {
 	style: "double",
 	layout: "full",
-	leftGlyph: { frameMs: DEFAULT_LEFT_GLYPH_FRAME_MS, glyphs: "", frames: [] },
+	leftGlyph: { frameMs: DEFAULT_GLYPH_FRAME_MS, glyphs: "", frames: [] },
+	rightGlyph: { frameMs: DEFAULT_GLYPH_FRAME_MS, glyphs: "", frames: [] },
+	spinnerGlyphs: emptySpinnerGlyphConfig(),
 };
 
 export const EXAMPLE_PROMPT_BORDER_CONFIG: PromptBorderConfig = {
 	style: "double",
 	layout: "full",
 	leftGlyph: {
-		frameMs: DEFAULT_LEFT_GLYPH_FRAME_MS,
+		frameMs: DEFAULT_GLYPH_FRAME_MS,
 		glyphs: DEFAULT_LEFT_GLYPH_TEXT,
-		frames: parseLeftGlyphFrames(DEFAULT_LEFT_GLYPH_TEXT),
+		frames: parseGlyphFrames(DEFAULT_LEFT_GLYPH_TEXT),
 	},
+	rightGlyph: {
+		frameMs: DEFAULT_GLYPH_FRAME_MS,
+		glyphs: "",
+		frames: [],
+	},
+	spinnerGlyphs: emptySpinnerGlyphConfig(),
 };
 
 export type PromptBorderAction =
@@ -120,13 +190,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
+function getGlyphTextPath(configPath: string, slot: PromptBorderGlyphSlot): string {
+	return path.join(path.dirname(configPath), GLYPH_TEXT_FILE_NAMES[slot]);
+}
+
 function toPromptBorderJson(config: PromptBorderConfig): Record<string, unknown> {
 	return {
 		style: config.style,
 		layout: config.layout,
 		leftGlyph: {
 			frameMs: config.leftGlyph.frameMs,
-			glyphs: config.leftGlyph.glyphs,
+		},
+		rightGlyph: {
+			frameMs: config.rightGlyph.frameMs,
+		},
+		spinnerGlyphs: {
+			status: {
+				frameMs: config.spinnerGlyphs.status.frameMs,
+			},
+			activity: {
+				frameMs: config.spinnerGlyphs.activity.frameMs,
+			},
 		},
 	};
 }
@@ -135,15 +219,36 @@ function mergePromptBorderJson(raw: Record<string, unknown>): Record<string, unk
 	const merged = { ...raw };
 	const promptBorder = isRecord(raw.promptBorder) ? { ...raw.promptBorder } : {};
 	const leftGlyph = isRecord(promptBorder.leftGlyph) ? { ...promptBorder.leftGlyph } : {};
+	const rightGlyph = isRecord(promptBorder.rightGlyph) ? { ...promptBorder.rightGlyph } : {};
+	const spinnerGlyphs = isRecord(promptBorder.spinnerGlyphs) ? { ...promptBorder.spinnerGlyphs } : {};
 	const examplePromptBorder = toPromptBorderJson(EXAMPLE_PROMPT_BORDER_CONFIG);
-	const exampleLeftGlyph = (examplePromptBorder.leftGlyph as Record<string, unknown>) ?? {};
+	const exampleLeftGlyph = isRecord(examplePromptBorder.leftGlyph) ? examplePromptBorder.leftGlyph : {};
+	const exampleRightGlyph = isRecord(examplePromptBorder.rightGlyph) ? examplePromptBorder.rightGlyph : {};
+	const exampleSpinnerGlyphs = isRecord(examplePromptBorder.spinnerGlyphs) ? examplePromptBorder.spinnerGlyphs : {};
 
 	if (typeof promptBorder.style !== "string") promptBorder.style = examplePromptBorder.style;
 	if (typeof promptBorder.layout !== "string") promptBorder.layout = examplePromptBorder.layout;
 	if (typeof leftGlyph.frameMs !== "number") leftGlyph.frameMs = exampleLeftGlyph.frameMs;
-	if (typeof leftGlyph.glyphs !== "string") leftGlyph.glyphs = exampleLeftGlyph.glyphs;
+	if (typeof rightGlyph.frameMs !== "number") rightGlyph.frameMs = exampleRightGlyph.frameMs;
 
+	delete leftGlyph.glyphs;
+	delete leftGlyph.frames;
+	delete rightGlyph.glyphs;
+	delete rightGlyph.frames;
+
+	for (const slot of SPINNER_GLYPH_SLOTS) {
+		const spinnerGlyph = isRecord(spinnerGlyphs[slot]) ? { ...spinnerGlyphs[slot] } : {};
+		const exampleSpinnerGlyph = isRecord(exampleSpinnerGlyphs[slot]) ? exampleSpinnerGlyphs[slot] : {};
+		if (typeof spinnerGlyph.frameMs !== "number") spinnerGlyph.frameMs = exampleSpinnerGlyph.frameMs;
+		delete spinnerGlyph.glyphs;
+		delete spinnerGlyph.frames;
+		spinnerGlyphs[slot] = spinnerGlyph;
+	}
+
+	delete promptBorder.loadingGlyph;
 	promptBorder.leftGlyph = leftGlyph;
+	promptBorder.rightGlyph = rightGlyph;
+	promptBorder.spinnerGlyphs = spinnerGlyphs;
 	merged.promptBorder = promptBorder;
 	return merged;
 }
@@ -156,9 +261,29 @@ function parsePromptBorderConfigJson(rawText: string): { json: unknown; invalid:
 	}
 }
 
-export function normalizePromptBorderConfig(raw: unknown): PromptBorderConfig {
+async function readGlyphTextFile(configPath: string, slot: PromptBorderGlyphSlot): Promise<string | undefined> {
+	const file = Bun.file(getGlyphTextPath(configPath, slot));
+	if (!(await file.exists())) return undefined;
+	return await file.text();
+}
+
+async function ensureGlyphTextFile(configPath: string, slot: PromptBorderGlyphSlot, seedText: string): Promise<string> {
+	const glyphPath = getGlyphTextPath(configPath, slot);
+	await mkdir(path.dirname(glyphPath), { recursive: true });
+	const file = Bun.file(glyphPath);
+	if (await file.exists()) return await file.text();
+	await Bun.write(glyphPath, seedText.length > 0 && !seedText.endsWith("\n") ? `${seedText}\n` : seedText);
+	return seedText;
+}
+
+export function normalizePromptBorderConfig(
+	raw: unknown,
+	glyphTexts: Partial<Record<PromptBorderGlyphSlot, string>> = {},
+): PromptBorderConfig {
 	const promptBorder = isRecord(raw) && isRecord(raw.promptBorder) ? raw.promptBorder : {};
 	const leftGlyph = isRecord(promptBorder.leftGlyph) ? promptBorder.leftGlyph : {};
+	const rightGlyph = isRecord(promptBorder.rightGlyph) ? promptBorder.rightGlyph : {};
+	const spinnerGlyphs = isRecord(promptBorder.spinnerGlyphs) ? promptBorder.spinnerGlyphs : {};
 	const style =
 		typeof promptBorder.style === "string" && isBorderStyleName(promptBorder.style)
 			? promptBorder.style
@@ -167,27 +292,93 @@ export function normalizePromptBorderConfig(raw: unknown): PromptBorderConfig {
 		typeof promptBorder.layout === "string" && isBorderLayoutName(promptBorder.layout)
 			? promptBorder.layout
 			: DEFAULT_PROMPT_BORDER_CONFIG.layout;
-	const frameMs =
-		typeof leftGlyph.frameMs === "number" &&
-		Number.isFinite(leftGlyph.frameMs) &&
-		leftGlyph.frameMs >= 16 &&
-		leftGlyph.frameMs <= 1000
-			? leftGlyph.frameMs
-			: DEFAULT_LEFT_GLYPH_FRAME_MS;
-	const glyphText = typeof leftGlyph.glyphs === "string" ? leftGlyph.glyphs : "";
-	const frames = glyphText.trim().length > 0 ? parseLeftGlyphFrames(glyphText) : [];
-	return {
-		style,
-		layout,
-		leftGlyph: {
+	const normalizeGlyph = (
+		glyph: Record<string, unknown>,
+		slot: PromptBorderGlyphSlot,
+		defaultFrameMs: number,
+	): PromptBorderGlyphConfig => {
+		const frameMs =
+			typeof glyph.frameMs === "number" &&
+			Number.isFinite(glyph.frameMs) &&
+			glyph.frameMs >= 16 &&
+			glyph.frameMs <= 1000
+				? glyph.frameMs
+				: defaultFrameMs;
+		const glyphText =
+			typeof glyphTexts[slot] === "string"
+				? glyphTexts[slot]
+				: typeof glyph.glyphs === "string"
+					? glyph.glyphs
+					: "";
+		const frames = glyphText.trim().length > 0 ? parseGlyphFrames(glyphText) : [];
+		return {
 			frameMs,
 			glyphs: frames.length > 0 ? glyphText : "",
 			frames,
+		};
+	};
+	return {
+		style,
+		layout,
+		leftGlyph: normalizeGlyph(leftGlyph, "left", DEFAULT_GLYPH_FRAME_MS),
+		rightGlyph: normalizeGlyph(rightGlyph, "right", DEFAULT_GLYPH_FRAME_MS),
+		spinnerGlyphs: {
+			status: normalizeGlyph(
+				isRecord(spinnerGlyphs.status) ? spinnerGlyphs.status : {},
+				"status",
+				DEFAULT_SPINNER_GLYPH_FRAME_MS,
+			),
+			activity: normalizeGlyph(
+				isRecord(spinnerGlyphs.activity) ? spinnerGlyphs.activity : {},
+				"activity",
+				DEFAULT_SPINNER_GLYPH_FRAME_MS,
+			),
 		},
 	};
 }
 
+async function ensurePersistedPromptBorderConfig(
+	configPath: string,
+): Promise<{ merged: Record<string, unknown>; glyphTexts: Record<PromptBorderGlyphSlot, string> } | undefined> {
+	await mkdir(path.dirname(configPath), { recursive: true });
+	const file = Bun.file(configPath);
+	if (!(await file.exists())) {
+		const created = { promptBorder: toPromptBorderJson(EXAMPLE_PROMPT_BORDER_CONFIG) };
+		const leftText = await ensureGlyphTextFile(configPath, "left", DEFAULT_LEFT_GLYPH_TEXT);
+		const rightText = await ensureGlyphTextFile(configPath, "right", "");
+		const statusText = await ensureGlyphTextFile(configPath, "status", "");
+		const activityText = await ensureGlyphTextFile(configPath, "activity", "");
+		await Bun.write(configPath, `${JSON.stringify(created, null, 2)}\n`);
+		return { merged: created, glyphTexts: { left: leftText, right: rightText, status: statusText, activity: activityText } };
+	}
+	const parsed = parsePromptBorderConfigJson(await file.text());
+	if (parsed.invalid || !isRecord(parsed.json)) return undefined;
+	const promptBorder = isRecord(parsed.json.promptBorder) ? parsed.json.promptBorder : {};
+	const leftGlyph = isRecord(promptBorder.leftGlyph) ? promptBorder.leftGlyph : {};
+	const rightGlyph = isRecord(promptBorder.rightGlyph) ? promptBorder.rightGlyph : {};
+	const spinnerGlyphs = isRecord(promptBorder.spinnerGlyphs) ? promptBorder.spinnerGlyphs : {};
+	const statusGlyph = isRecord(spinnerGlyphs.status) ? spinnerGlyphs.status : {};
+	const activityGlyph = isRecord(spinnerGlyphs.activity) ? spinnerGlyphs.activity : {};
+	const leftSeed = typeof leftGlyph.glyphs === "string" && leftGlyph.glyphs.trim().length > 0 ? leftGlyph.glyphs : DEFAULT_LEFT_GLYPH_TEXT;
+	const rightSeed = typeof rightGlyph.glyphs === "string" && rightGlyph.glyphs.trim().length > 0 ? rightGlyph.glyphs : "";
+	const statusSeed = typeof statusGlyph.glyphs === "string" && statusGlyph.glyphs.trim().length > 0 ? statusGlyph.glyphs : "";
+	const activitySeed = typeof activityGlyph.glyphs === "string" && activityGlyph.glyphs.trim().length > 0 ? activityGlyph.glyphs : "";
+	const leftText = await ensureGlyphTextFile(configPath, "left", leftSeed);
+	const rightText = await ensureGlyphTextFile(configPath, "right", rightSeed);
+	const statusText = await ensureGlyphTextFile(configPath, "status", statusSeed);
+	const activityText = await ensureGlyphTextFile(configPath, "activity", activitySeed);
+	const merged = mergePromptBorderJson(parsed.json);
+	await Bun.write(configPath, `${JSON.stringify(merged, null, 2)}\n`);
+	return { merged, glyphTexts: { left: leftText, right: rightText, status: statusText, activity: activityText } };
+}
+
 export async function readPromptBorderConfig(configPath = CONFIG_PATH): Promise<PromptBorderConfig> {
+	const [leftText, rightText, statusText, activityText] = await Promise.all([
+		readGlyphTextFile(configPath, "left"),
+		readGlyphTextFile(configPath, "right"),
+		readGlyphTextFile(configPath, "status"),
+		readGlyphTextFile(configPath, "activity"),
+	]);
 	const file = Bun.file(configPath);
 	if (!(await file.exists())) {
 		didReadInvalidConfig = false;
@@ -198,58 +389,84 @@ export async function readPromptBorderConfig(configPath = CONFIG_PATH): Promise<
 		didReadInvalidConfig = true;
 		return DEFAULT_PROMPT_BORDER_CONFIG;
 	}
+	const glyphTexts: Partial<Record<PromptBorderGlyphSlot, string>> = {};
+	if (leftText !== undefined) glyphTexts.left = leftText;
+	if (rightText !== undefined) glyphTexts.right = rightText;
+	if (statusText !== undefined) glyphTexts.status = statusText;
+	if (activityText !== undefined) glyphTexts.activity = activityText;
 	didReadInvalidConfig = false;
-	return normalizePromptBorderConfig(parsed.json);
+	return normalizePromptBorderConfig(parsed.json, glyphTexts);
 }
 
 export async function ensurePromptBorderConfigFile(configPath = CONFIG_PATH): Promise<PromptBorderConfig> {
-	await mkdir(path.dirname(configPath), { recursive: true });
-	const file = Bun.file(configPath);
-	if (!(await file.exists())) {
-		didReadInvalidConfig = false;
-		const created = { promptBorder: toPromptBorderJson(EXAMPLE_PROMPT_BORDER_CONFIG) };
-		await Bun.write(configPath, `${JSON.stringify(created, null, 2)}\n`);
-		return normalizePromptBorderConfig(created);
-	}
-	const parsed = parsePromptBorderConfigJson(await file.text());
-	if (parsed.invalid || !isRecord(parsed.json)) {
+	const persisted = await ensurePersistedPromptBorderConfig(configPath);
+	if (persisted === undefined) {
 		didReadInvalidConfig = true;
 		return DEFAULT_PROMPT_BORDER_CONFIG;
 	}
 	didReadInvalidConfig = false;
-	const merged = mergePromptBorderJson(parsed.json);
-	await Bun.write(configPath, `${JSON.stringify(merged, null, 2)}\n`);
-	return normalizePromptBorderConfig(merged);
+	return normalizePromptBorderConfig(persisted.merged, persisted.glyphTexts);
 }
 
 export async function writePromptBorderConfigSelection(
 	state: PromptBorderState,
 	configPath = CONFIG_PATH,
 ): Promise<PromptBorderConfig> {
-	await mkdir(path.dirname(configPath), { recursive: true });
-	const file = Bun.file(configPath);
-	if (!(await file.exists())) {
-		const created = { promptBorder: toPromptBorderJson(EXAMPLE_PROMPT_BORDER_CONFIG) };
-		const promptBorder = created.promptBorder as Record<string, unknown>;
-		promptBorder.style = state.style;
-		promptBorder.layout = state.layout;
-		didReadInvalidConfig = false;
-		await Bun.write(configPath, `${JSON.stringify(created, null, 2)}\n`);
-		return normalizePromptBorderConfig(created);
-	}
-	const parsed = parsePromptBorderConfigJson(await file.text());
-	if (parsed.invalid || !isRecord(parsed.json)) {
+	const persisted = await ensurePersistedPromptBorderConfig(configPath);
+	if (persisted === undefined) {
 		didReadInvalidConfig = true;
 		return DEFAULT_PROMPT_BORDER_CONFIG;
 	}
-	const merged = mergePromptBorderJson(parsed.json);
-	const promptBorder = isRecord(merged.promptBorder) ? merged.promptBorder : {};
+	const promptBorder = isRecord(persisted.merged.promptBorder) ? { ...persisted.merged.promptBorder } : {};
 	promptBorder.style = state.style;
 	promptBorder.layout = state.layout;
-	merged.promptBorder = promptBorder;
+	persisted.merged.promptBorder = promptBorder;
 	didReadInvalidConfig = false;
-	await Bun.write(configPath, `${JSON.stringify(merged, null, 2)}\n`);
-	return normalizePromptBorderConfig(merged);
+	await Bun.write(configPath, `${JSON.stringify(persisted.merged, null, 2)}\n`);
+	return normalizePromptBorderConfig(persisted.merged, persisted.glyphTexts);
+}
+
+export type SpinnerGlyphFrameOverride = {
+	frames: readonly string[];
+	frameMs: number;
+};
+export type SpinnerGlyphFrameOverrides = Partial<Record<SpinnerType, SpinnerGlyphFrameOverride>>;
+
+export function installSpinnerGlyphFrames(
+	themeInstance: Pick<Theme, "getSpinnerFrames">,
+	frameOverrides: SpinnerGlyphFrameOverrides,
+): (() => void) | undefined {
+	const statusFrames =
+		frameOverrides.status === undefined
+			? undefined
+			: buildTimedSpinnerFrames(frameOverrides.status.frames, frameOverrides.status.frameMs);
+	const activityFrames =
+		frameOverrides.activity === undefined
+			? undefined
+			: buildTimedSpinnerFrames(frameOverrides.activity.frames, frameOverrides.activity.frameMs);
+	const overrideFrames = (type: SpinnerType): readonly string[] | undefined => {
+		if (type === "status") {
+			return statusFrames !== undefined && statusFrames.length > 0 ? statusFrames : undefined;
+		}
+		return activityFrames !== undefined && activityFrames.length > 0 ? activityFrames : undefined;
+	};
+	if (overrideFrames("status") === undefined && overrideFrames("activity") === undefined) return undefined;
+	const descriptor = Object.getOwnPropertyDescriptor(themeInstance, "getSpinnerFrames");
+	const original = themeInstance.getSpinnerFrames.bind(themeInstance);
+	Object.defineProperty(themeInstance, "getSpinnerFrames", {
+		configurable: true,
+		value(type: SpinnerType = "status"): string[] {
+			const frames = overrideFrames(type);
+			return frames === undefined ? original(type) : Array.from(frames);
+		},
+	});
+	return () => {
+		if (descriptor) {
+			Object.defineProperty(themeInstance, "getSpinnerFrames", descriptor);
+			return;
+		}
+		Reflect.deleteProperty(themeInstance, "getSpinnerFrames");
+	};
 }
 
 export function isBorderStyleName(value: string): value is BorderStyleName {
@@ -258,6 +475,21 @@ export function isBorderStyleName(value: string): value is BorderStyleName {
 
 export function isBorderLayoutName(value: string): value is BorderLayoutName {
 	return (LAYOUT_NAMES as readonly string[]).includes(value);
+}
+
+let restoreSpinnerGlyphFrames: (() => void) | undefined;
+
+function applySpinnerGlyphFrames(
+	themeInstance: Pick<Theme, "getSpinnerFrames"> | undefined,
+	config: PromptBorderConfig,
+): void {
+	restoreSpinnerGlyphFrames?.();
+	restoreSpinnerGlyphFrames = undefined;
+	if (themeInstance === undefined) return;
+	restoreSpinnerGlyphFrames = installSpinnerGlyphFrames(themeInstance, {
+		status: config.spinnerGlyphs.status,
+		activity: config.spinnerGlyphs.activity,
+	});
 }
 
 export function getPromptBorderArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
@@ -487,14 +719,144 @@ function replaceSideBodyLeftGlyph(line: string, glyphs: PromptBorderGlyphs, fram
 	return `${prefix}${fittedFrame}${suffixTokens.join("")}`;
 }
 
+function replaceBodyRightGlyph(line: string, glyphs: PromptBorderGlyphs, frame: string): string {
+	const plain = line.replace(ANSI_SGR_PATTERN, "");
+	const plainChars = [...plain];
+	if (plainChars.length < 4 || plainChars[0] !== glyphs.bottomLeft || plainChars.at(-1) !== glyphs.bottomRight) return line;
+	if (plainChars.slice(1, -1).every(char => char === glyphs.horizontal)) return line;
+	const tokens = [...line.matchAll(/\x1b\[[0-9;:]*m|./gu)].map(match => match[0]);
+	let borderTokenIndex = -1;
+	let visibleIndex = 0;
+	for (let index = 0; index < tokens.length; index += 1) {
+		if (tokens[index]!.startsWith("\x1b[")) continue;
+		if (visibleIndex === plainChars.length - 1) {
+			borderTokenIndex = index;
+			break;
+		}
+		visibleIndex += 1;
+	}
+	if (borderTokenIndex === -1) return line;
+	const prefixTokens = tokens.slice(0, borderTokenIndex);
+	const suffix = tokens.slice(borderTokenIndex).join("");
+	const frameWidth = visibleWidth(frame);
+	let removableWidth = 0;
+	let removeFromIndex = prefixTokens.length;
+	for (let index = prefixTokens.length - 1; index >= 0 && removableWidth < frameWidth; index -= 1) {
+		const token = prefixTokens[index]!;
+		if (token.startsWith("\x1b[")) continue;
+		if (token !== " " && token !== glyphs.horizontal) break;
+		removeFromIndex = index;
+		removableWidth += visibleWidth(token);
+	}
+	if (removableWidth === 0) return line;
+	const fittedFrame = frameWidth > removableWidth ? truncateToWidth(frame, removableWidth, "") : frame;
+	const fittedWidth = visibleWidth(fittedFrame);
+	const leftPad = removableWidth > fittedWidth ? " ".repeat(removableWidth - fittedWidth) : "";
+	return `${prefixTokens.slice(0, removeFromIndex).join("")}${leftPad}${fittedFrame}${suffix}`;
+}
+
+function replaceSideBodyRightGlyph(line: string, glyphs: PromptBorderGlyphs, frame: string): string {
+	const plain = line.replace(ANSI_SGR_PATTERN, "");
+	const plainChars = [...plain];
+	if (plainChars.length < 4 || plainChars[0] !== glyphs.vertical || plainChars.at(-1) !== glyphs.vertical) return line;
+	const tokens = [...line.matchAll(/\x1b\[[0-9;:]*m|./gu)].map(match => match[0]);
+	let borderTokenIndex = -1;
+	let visibleIndex = 0;
+	for (let index = 0; index < tokens.length; index += 1) {
+		if (tokens[index]!.startsWith("\x1b[")) continue;
+		if (visibleIndex === plainChars.length - 1) {
+			borderTokenIndex = index;
+			break;
+		}
+		visibleIndex += 1;
+	}
+	if (borderTokenIndex === -1) return line;
+	const prefixTokens = tokens.slice(0, borderTokenIndex);
+	const suffix = tokens.slice(borderTokenIndex).join("");
+	const frameWidth = visibleWidth(frame);
+	let removableWidth = 0;
+	let removeFromIndex = prefixTokens.length;
+	for (let index = prefixTokens.length - 1; index >= 0 && removableWidth < frameWidth; index -= 1) {
+		const token = prefixTokens[index]!;
+		if (token.startsWith("\x1b[")) continue;
+		if (token !== " ") break;
+		removeFromIndex = index;
+		removableWidth += visibleWidth(token);
+	}
+	if (removableWidth === 0) return line;
+	const fittedFrame = frameWidth > removableWidth ? truncateToWidth(frame, removableWidth, "") : frame;
+	const fittedWidth = visibleWidth(fittedFrame);
+	const leftPad = removableWidth > fittedWidth ? " ".repeat(removableWidth - fittedWidth) : "";
+	return `${prefixTokens.slice(0, removeFromIndex).join("")}${leftPad}${fittedFrame}${suffix}`;
+}
+
+type CursorSymbols = Pick<EditorTheme["symbols"], "inputCursor" | "cursor">;
+
+function scoreCursorBodyRow(
+	line: string,
+	cursorSymbols: CursorSymbols,
+	cursorLineText: string,
+	cursorCol: number,
+): number {
+	const plain = line.replace(ANSI_SGR_PATTERN, "");
+	if (line.includes(CURSOR_MARKER) || line.includes("\x1b[7m")) return 100;
+	if (!plain.includes(cursorSymbols.inputCursor) && !plain.includes(cursorSymbols.cursor)) return -1;
+	let score = 1;
+	const prefixHint = cursorCol > 0 ? cursorLineText.slice(Math.max(0, cursorCol - 8), cursorCol) : "";
+	if (prefixHint.length > 0 && plain.includes(prefixHint)) score += 10;
+	const lineHint = cursorLineText.length > 0 ? cursorLineText.slice(0, Math.min(cursorLineText.length, 8)) : "";
+	if (lineHint.length > 0 && plain.includes(lineHint)) score += 5;
+	return score;
+}
+
+function applyGlyphsToCursorRow(
+	rows: readonly string[],
+	glyphs: PromptBorderGlyphs,
+	cursorSymbols: CursorSymbols,
+	cursorLineText: string,
+	cursorCol: number,
+	leftFrame: string | undefined,
+	rightFrame: string | undefined,
+	borderLine?: string,
+): readonly string[] {
+	let targetIndex = -1;
+	let targetScore = -1;
+	let fallbackIndex = -1;
+	for (let index = 0; index < rows.length; index += 1) {
+		const row = rows[index]!;
+		if (row === borderLine) continue;
+		fallbackIndex = index;
+		const score = scoreCursorBodyRow(row, cursorSymbols, cursorLineText, cursorCol);
+		if (score < targetScore) continue;
+		targetScore = score;
+		targetIndex = index;
+	}
+	const rowIndex = targetScore >= 0 ? targetIndex : fallbackIndex;
+	if (rowIndex === -1 || (leftFrame === undefined && rightFrame === undefined)) return rows;
+	return rows.map((row, index) => {
+		if (index !== rowIndex) return row;
+		let nextRow = row;
+		if (leftFrame !== undefined) {
+			nextRow = replaceSideBodyLeftGlyph(replaceBodyLeftGlyph(nextRow, glyphs, leftFrame), glyphs, leftFrame);
+		}
+		if (rightFrame !== undefined) {
+			nextRow = replaceSideBodyRightGlyph(replaceBodyRightGlyph(nextRow, glyphs, rightFrame), glyphs, rightFrame);
+		}
+		return nextRow;
+	});
+}
+
 export class PromptBorderEditor extends CustomEditor {
+	readonly #cursorSymbols: CursorSymbols;
 	readonly #state: PromptBorderState;
 	readonly #glyphs: PromptBorderGlyphs;
 	readonly #config: PromptBorderConfig;
 	#topBorder: EditorTopBorder | undefined;
 	#leftGlyphFrameIndex = 0;
+	#rightGlyphFrameIndex = 0;
 	#leftGlyphTimer: Timer | undefined;
-	#requestLeftGlyphRepaint: (() => void) | undefined;
+	#rightGlyphTimer: Timer | undefined;
+	#requestGlyphRepaint: (() => void) | undefined;
 
 	constructor(theme: EditorTheme, state: PromptBorderState, config: PromptBorderConfig = DEFAULT_PROMPT_BORDER_CONFIG) {
 		const glyphs = borderStyles[state.style];
@@ -503,6 +865,7 @@ export class PromptBorderEditor extends CustomEditor {
 				? withPromptBorder(theme, state)
 				: withPromptBorder(theme, state, withSeparateBottomGlyphs(glyphs));
 		super(editorTheme);
+		this.#cursorSymbols = { inputCursor: theme.symbols.inputCursor, cursor: theme.symbols.cursor };
 		this.#state = state;
 		this.#glyphs = glyphs;
 		this.#config = config;
@@ -513,35 +876,67 @@ export class PromptBorderEditor extends CustomEditor {
 	}
 	override setShimmerRepaintHandler(handler: (() => void) | undefined): void {
 		super.setShimmerRepaintHandler(handler);
-		this.#requestLeftGlyphRepaint = handler;
+		this.#requestGlyphRepaint = handler;
 		if (handler !== undefined) return;
 		if (this.#leftGlyphTimer !== undefined) clearTimeout(this.#leftGlyphTimer);
+		if (this.#rightGlyphTimer !== undefined) clearTimeout(this.#rightGlyphTimer);
 		this.#leftGlyphTimer = undefined;
+		this.#rightGlyphTimer = undefined;
 	}
-	#currentLeftGlyphFrame(): string | undefined {
-		const frames = this.#config.leftGlyph.frames;
-		if (frames.length === 0) return undefined;
-		return frames[this.#leftGlyphFrameIndex % frames.length];
+	#currentGlyphFrame(side: PromptBorderGlyphSide): string | undefined {
+		const glyphConfig = side === "left" ? this.#config.leftGlyph : this.#config.rightGlyph;
+		const frameIndex = side === "left" ? this.#leftGlyphFrameIndex : this.#rightGlyphFrameIndex;
+		if (glyphConfig.frames.length === 0) return undefined;
+		return glyphConfig.frames[frameIndex % glyphConfig.frames.length];
 	}
-	#scheduleLeftGlyphFrame(): void {
-		const frames = this.#config.leftGlyph.frames;
-		if (frames.length <= 1 || this.#leftGlyphTimer !== undefined || this.#requestLeftGlyphRepaint === undefined) return;
-		this.#leftGlyphTimer = setTimeout(() => {
-			this.#leftGlyphTimer = undefined;
-			this.#leftGlyphFrameIndex = (this.#leftGlyphFrameIndex + 1) % frames.length;
-			this.#requestLeftGlyphRepaint?.();
-		}, this.#config.leftGlyph.frameMs);
-		this.#leftGlyphTimer.unref?.();
+	#scheduleGlyphFrame(side: PromptBorderGlyphSide): void {
+		const glyphConfig = side === "left" ? this.#config.leftGlyph : this.#config.rightGlyph;
+		const timer = side === "left" ? this.#leftGlyphTimer : this.#rightGlyphTimer;
+		if (glyphConfig.frames.length <= 1 || timer !== undefined || this.#requestGlyphRepaint === undefined) return;
+		const scheduledTimer = setTimeout(() => {
+			if (side === "left") {
+				this.#leftGlyphTimer = undefined;
+				this.#leftGlyphFrameIndex = (this.#leftGlyphFrameIndex + 1) % glyphConfig.frames.length;
+			} else {
+				this.#rightGlyphTimer = undefined;
+				this.#rightGlyphFrameIndex = (this.#rightGlyphFrameIndex + 1) % glyphConfig.frames.length;
+			}
+			this.#requestGlyphRepaint?.();
+		}, glyphConfig.frameMs);
+		scheduledTimer.unref?.();
+		if (side === "left") this.#leftGlyphTimer = scheduledTimer;
+		else this.#rightGlyphTimer = scheduledTimer;
 	}
 	override render(width: number): readonly string[] {
 		const lines = [...super.render(width)];
-		const frame = this.#currentLeftGlyphFrame();
-		if (frame !== undefined) this.#scheduleLeftGlyphFrame();
+		const leftFrame = this.#currentGlyphFrame("left");
+		const rightFrame = this.#currentGlyphFrame("right");
+		if (leftFrame !== undefined) this.#scheduleGlyphFrame("left");
+		if (rightFrame !== undefined) this.#scheduleGlyphFrame("right");
+		const cursor = this.getCursor();
+		const cursorLineText = this.getText().split("\n")[cursor.line] ?? "";
 		if (this.#state.layout === "default") {
 			if (lines[0] === undefined) return lines;
-			const bodyRows =
-				frame === undefined ? lines.slice(1) : lines.slice(1).map(line => replaceBodyLeftGlyph(line, this.#glyphs, frame));
-			return [restyleTopBorderHorizontalRuns(lines[0], this.#glyphs), ...bodyRows];
+			const bodyAndAutocompleteRows = lines.slice(1);
+			const splitIndex = bodyAndAutocompleteRows.findIndex(line => {
+				const plain = line.replace(ANSI_SGR_PATTERN, "");
+				return !(
+					(plain.startsWith(this.#glyphs.vertical) && plain.endsWith(this.#glyphs.vertical)) ||
+					(plain.startsWith(this.#glyphs.bottomLeft) && plain.endsWith(this.#glyphs.bottomRight))
+				);
+			});
+			const bodyRows = splitIndex === -1 ? bodyAndAutocompleteRows : bodyAndAutocompleteRows.slice(0, splitIndex);
+			const autocompleteRows = splitIndex === -1 ? [] : bodyAndAutocompleteRows.slice(splitIndex);
+			const glyphRows = applyGlyphsToCursorRow(
+				bodyRows,
+				this.#glyphs,
+				this.#cursorSymbols,
+				cursorLineText,
+				cursor.col,
+				leftFrame,
+				rightFrame,
+			);
+			return [restyleTopBorderHorizontalRuns(lines[0], this.#glyphs), ...glyphRows, ...autocompleteRows];
 		}
 		const restyledTopRow = lines[0] === undefined ? undefined : restyleTopBorderHorizontalRuns(lines[0], this.#glyphs);
 		const hiddenTopRow = restyledTopRow === undefined ? null : hideTopBorderLine(restyledTopRow, this.#glyphs, this.#topBorder);
@@ -566,20 +961,28 @@ export class PromptBorderEditor extends CustomEditor {
 				? sideOnlyBodyRows.map(line => hideSideBorderGlyphs(line, this.#glyphs))
 				: sideOnlyBodyRows;
 		const borderLine = renderBottomBorderLine(width, this.#glyphs, this.borderColor);
-		const applyLeftGlyph = (rows: readonly string[]) =>
-			frame === undefined
-				? rows
-				: rows.map(line => (line === borderLine ? line : replaceSideBodyLeftGlyph(replaceBodyLeftGlyph(line, this.#glyphs, frame), this.#glyphs, frame)));
+		const glyphRows = applyGlyphsToCursorRow(
+			normalizedBodyRows,
+			this.#glyphs,
+			this.#cursorSymbols,
+			cursorLineText,
+			cursor.col,
+			leftFrame,
+			rightFrame,
+			borderLine,
+		);
 		if (this.#state.layout === "sides") {
-			if (splitIndex === -1) return [...topRows, ...applyLeftGlyph(normalizedBodyRows)];
-			return [...topRows, ...applyLeftGlyph(normalizedBodyRows), ...bodyAndAutocompleteRows.slice(splitIndex)];
+			if (splitIndex === -1) return [...topRows, ...glyphRows];
+			return [...topRows, ...glyphRows, ...bodyAndAutocompleteRows.slice(splitIndex)];
 		}
-		if (splitIndex === -1) return [...topRows, ...applyLeftGlyph(normalizedBodyRows), borderLine];
-		return [...topRows, ...applyLeftGlyph(normalizedBodyRows), borderLine, ...bodyAndAutocompleteRows.slice(splitIndex)];
+		if (splitIndex === -1) return [...topRows, ...glyphRows, borderLine];
+		return [...topRows, ...glyphRows, borderLine, ...bodyAndAutocompleteRows.slice(splitIndex)];
 	}
 	dispose(): void {
 		if (this.#leftGlyphTimer !== undefined) clearTimeout(this.#leftGlyphTimer);
+		if (this.#rightGlyphTimer !== undefined) clearTimeout(this.#rightGlyphTimer);
 		this.#leftGlyphTimer = undefined;
+		this.#rightGlyphTimer = undefined;
 		super.setShimmerRepaintHandler(undefined);
 	}
 }
@@ -589,6 +992,7 @@ export default function promptBorderStyle(pi: ExtensionAPI, configPath = CONFIG_
 	pi.on("session_start", async (_event, ctx) => {
 		if (!ctx.hasUI) return;
 		activeConfig = await ensurePromptBorderConfigFile(configPath);
+		applySpinnerGlyphFrames(ctx.ui.theme, activeConfig);
 		notifyInvalidConfig(ctx);
 		activeBorder = { style: activeConfig.style, layout: activeConfig.layout };
 		ctx.ui.setEditorComponent((_tui, theme) => new PromptBorderEditor(theme, activeBorder, activeConfig));
@@ -597,6 +1001,8 @@ export default function promptBorderStyle(pi: ExtensionAPI, configPath = CONFIG_
 	pi.on("session_shutdown", (_event, ctx) => {
 		if (!ctx.hasUI) return;
 		ctx.ui.setEditorComponent(undefined);
+		restoreSpinnerGlyphFrames?.();
+		restoreSpinnerGlyphFrames = undefined;
 	});
 
 	pi.registerCommand("prompt-border", {
@@ -605,6 +1011,7 @@ export default function promptBorderStyle(pi: ExtensionAPI, configPath = CONFIG_
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) return;
 			activeConfig = await ensurePromptBorderConfigFile(configPath);
+			applySpinnerGlyphFrames(ctx.ui.theme, activeConfig);
 			notifyInvalidConfig(ctx);
 			const action = parsePromptBorderArgs(args, activeBorder);
 			if (action.kind === "reset") {
@@ -619,6 +1026,7 @@ export default function promptBorderStyle(pi: ExtensionAPI, configPath = CONFIG_
 			}
 			activeBorder = action.state;
 			activeConfig = await writePromptBorderConfigSelection(activeBorder, configPath);
+			applySpinnerGlyphFrames(ctx.ui.theme, activeConfig);
 			notifyInvalidConfig(ctx);
 			ctx.ui.setEditorComponent((_tui, theme) => new PromptBorderEditor(theme, activeBorder, activeConfig));
 			ctx.ui.notify(`Prompt border: ${activeBorder.style} ${activeBorder.layout}`, "info");

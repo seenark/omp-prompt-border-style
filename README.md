@@ -12,7 +12,8 @@ It customizes:
 - the top status-line border glyphs
 - the editor side borders
 - a synthetic bottom border for layouts that use one
-- a config-driven animated body-left glyph when glyph text is configured
+- config-driven animated left/right cursor-row glyphs when glyph text is configured
+- config-driven status and activity spinner glyphs that preserve Oh My Pi defaults for any unconfigured spinner group
 - slash-command argument completions for the command itself
 
 The default active state is:
@@ -83,9 +84,9 @@ For non-`default` layouts, the plugin inserts the synthetic bottom border before
 
 ## Configuration
 
-The plugin reads optional settings from `~/.config/codesook-omp/config.json` and writes `style`/`layout` changes there when `/prompt-border` applies a new selection.
+The plugin reads optional settings from `~/.config/codesook-omp/config.json` and writes `style`/`layout` changes there when `/prompt-border` applies a new selection. That JSON is safe to share across computers.
 
-`style` and `layout` set the initial prompt border. The same shared file may also contain a `welcomeScreen` section managed by `codesook-omp`; this plugin preserves that section when it updates `promptBorder`. The custom left glyph is disabled unless `promptBorder.leftGlyph.glyphs` contains text. Frames are written as one string separated by spaces. `/prompt-border reset` only resets the current editor component; it does not write a disabled state because the config schema has no disabled flag.
+`style` and `layout` set the initial prompt border. The same shared file may also contain a `welcomeScreen` section managed by `codesook-omp`; this plugin preserves that section when it updates `promptBorder`. Local glyph frame text lives next to the JSON in `~/.config/codesook-omp/prompt-border-left-glyphs.txt`, `~/.config/codesook-omp/prompt-border-right-glyphs.txt`, `~/.config/codesook-omp/prompt-border-status-spinner-glyphs.txt`, and `~/.config/codesook-omp/prompt-border-activity-spinner-glyphs.txt`. Frames are whitespace-separated in those text files. Oh My Pi currently has two spinner groups: status and activity. Status frames are used by theme.spinnerFrames/status UI spinners; activity frames are used by getSymbolTheme().spinnerFrames/loading activity spinners.
 
 ```json
 {
@@ -93,14 +94,53 @@ The plugin reads optional settings from `~/.config/codesook-omp/config.json` and
     "style": "double",
     "layout": "full",
     "leftGlyph": {
-      "frameMs": 70,
-      "glyphs": "􁦘􁦙  􁦚􁦛"
+      "frameMs": 70
+    },
+    "rightGlyph": {
+      "frameMs": 70
+    },
+    "spinnerGlyphs": {
+      "status": {
+        "frameMs": 80
+      },
+      "activity": {
+        "frameMs": 80
+      }
     }
   }
 }
 ```
 
-`glyphs` replaces only the first body-left horizontal glyph in rows shaped like OMP’s original `╰─` editor body prefix. It does not change border style, layout, side borders, top borders, or synthetic bottom borders. The plugin creates the file with the full example glyph text when it is missing.
+`spinnerGlyphs.status.frameMs` and `spinnerGlyphs.activity.frameMs` set the desired source-frame duration in milliseconds for each spinner group.
+
+```text
+# ~/.config/codesook-omp/prompt-border-left-glyphs.txt
+􁦘􁦙  􁦚􁦛
+```
+
+```text
+# ~/.config/codesook-omp/prompt-border-right-glyphs.txt
+
+```
+
+```text
+# ~/.config/codesook-omp/prompt-border-status-spinner-glyphs.txt
+S0  S1  S2
+```
+
+```text
+# ~/.config/codesook-omp/prompt-border-activity-spinner-glyphs.txt
+􁦘􁦙  􁦚􁦛
+```
+
+```text
+# With activity.frameMs = 240, each activity frame is repeated internally for about 240ms.
+# With activity.frameMs = 40, the plugin skips source frames because Oh My Pi cannot repaint the spinner faster than 80ms.
+```
+
+Each spinner file may contain one or more whitespace-separated frames. The plugin adapts those configured frames to Oh My Pi's fixed 80ms host spinner tick by repeating frames for slower `frameMs` values and skipping source frames for faster ones. There is no plugin-imposed maximum frame count, but very high `frameMs` values duplicate frames internally, so huge source lists plus slow timings create larger in-memory spinner arrays. If a spinner file is empty or missing, that spinner group is not patched and Oh My Pi uses its built-in frames for that group.
+
+The left and right glyph files affect only the cursor/input row. They do not change border style, layout, side borders, top borders, autocomplete rows, or synthetic bottom borders.
 
 ## Examples
 
@@ -148,7 +188,7 @@ bun test src/main.test.ts
 
 ## Repository contents
 
-- `src/main.ts` — plugin implementation, border rendering, command parsing, and command registration
+- `src/main.ts` — plugin implementation, border rendering, status/activity spinner glyph patching, and command registration
 - `src/main.test.ts` — parser, renderer, command, and completion tests
 - `package.json` — package metadata, peer dependencies, scripts, and OMP extension entrypoint
 - `tsconfig.json` — TypeScript configuration
