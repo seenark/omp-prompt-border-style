@@ -9,12 +9,16 @@ import promptBorderStyle, {
 	PromptBorderEditor,
 	borderStyles,
 	buildTimedSpinnerFrames,
+	createSpinnerFrameDebugReport,
 	ensurePromptBorderConfigFile,
+	formatSpinnerFrameDebugReport,
 	getPromptBorderArgumentCompletions,
+	getPromptLoadingGlyphArgumentCompletions,
 	installSpinnerGlyphFrames,
 	normalizePromptBorderConfig,
 	parseGlyphFrames,
 	parsePromptBorderArgs,
+	parsePromptLoadingGlyphArgs,
 	readPromptBorderConfig,
 	renderBottomBorderLine,
 	replaceBodyLeftGlyph,
@@ -138,6 +142,70 @@ test("builds timed spinner frames by preserving 80ms frames", () => {
 
 test("builds timed spinner frames by skipping faster source frames", () => {
 	expect(buildTimedSpinnerFrames(["A0", "A1", "A2", "A3"], 40)).toEqual(["A0", "A2"]);
+});
+
+describe("parsePromptLoadingGlyphArgs", () => {
+	test("accepts debug frames", () => {
+		expect(parsePromptLoadingGlyphArgs("debug frames")).toEqual({ kind: "frames" });
+	});
+
+	test("accepts debug demo", () => {
+		expect(parsePromptLoadingGlyphArgs("debug demo")).toEqual({ kind: "demo" });
+	});
+
+	test("accepts debug on and off", () => {
+		expect(parsePromptLoadingGlyphArgs("debug on")).toEqual({ kind: "on" });
+		expect(parsePromptLoadingGlyphArgs("debug off")).toEqual({ kind: "off" });
+	});
+
+	test("rejects unknown loading glyph commands", () => {
+		expect(parsePromptLoadingGlyphArgs("debug wobble")).toEqual({ kind: "invalid" });
+	});
+});
+
+describe("getPromptLoadingGlyphArgumentCompletions", () => {
+	test("offers the debug subcommand at the root", () => {
+		expect(getPromptLoadingGlyphArgumentCompletions("")).toEqual([{ value: "debug", label: "debug" }]);
+	});
+
+	test("offers debug actions after the subcommand", () => {
+		expect(getPromptLoadingGlyphArgumentCompletions("debug ")).toEqual([
+			{ value: "debug frames", label: "frames" },
+			{ value: "debug demo", label: "demo" },
+			{ value: "debug on", label: "on" },
+			{ value: "debug off", label: "off" },
+		]);
+	});
+});
+
+test("reports skipped frames for a 20ms activity spinner", () => {
+	const report = createSpinnerFrameDebugReport("activity", {
+		frames: ["F0", "F1", "F2", "F3", "F4", "F5", "F6", "F7"],
+		frameMs: 20,
+	});
+
+	expect(report).toEqual({
+		type: "activity",
+		frameMs: 20,
+		sourceFrames: ["F0", "F1", "F2", "F3", "F4", "F5", "F6", "F7"],
+		visibleFrames: ["F0", "F4"],
+		mode: "skipped",
+	});
+});
+
+test("formats a frame debug report with the visible subsequence note", () => {
+	const formatted = formatSpinnerFrameDebugReport({
+		type: "activity",
+		frameMs: 20,
+		sourceFrames: ["F0", "F1", "F2", "F3", "F4", "F5", "F6", "F7"],
+		visibleFrames: ["F0", "F4"],
+		mode: "skipped",
+	});
+
+	expect(formatted).toContain("Prompt loading glyphs: activity");
+	expect(formatted).toContain("visible (2): F0 F4");
+	expect(formatted).toContain("mode: skips source frames to match 80ms host tick");
+	expect(formatted).toContain("visible subsequence");
 });
 
 describe("PromptBorderEditor", () => {

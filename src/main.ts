@@ -85,6 +85,8 @@ const USAGE = `Usage: /prompt-border <${STYLE_NAMES.join("|")}> [full|bottom|sid
 const DEFAULT_GLYPH_FRAME_MS = 70;
 const DEFAULT_SPINNER_GLYPH_FRAME_MS = 80;
 const HOST_SPINNER_FRAME_MS = 80;
+const LOADING_GLYPH_DEBUG_ROOT_OPTIONS = ["debug"] as const;
+const LOADING_GLYPH_DEBUG_ACTIONS = ["frames", "demo", "on", "off"] as const;
 const SPINNER_GLYPH_SLOTS = ["status", "activity"] as const satisfies readonly SpinnerType[];
 const GLYPH_TEXT_FILE_NAMES: Record<PromptBorderGlyphSlot, string> = {
 	left: "prompt-border-left-glyphs.txt",
@@ -140,6 +142,67 @@ export function buildTimedSpinnerFrames(
 		const sourceFrameIndex = Math.floor((hostFrameIndex * safeHostFrameMs) / safeFrameMs) % frames.length;
 		return frames[sourceFrameIndex];
 	});
+}
+
+export type PromptLoadingGlyphDebugAction =
+	| { kind: "frames" }
+	| { kind: "demo" }
+	| { kind: "on" }
+	| { kind: "off" }
+	| { kind: "invalid" };
+
+export type SpinnerFrameDebugMode = "empty" | "unchanged" | "repeated" | "skipped";
+
+export type SpinnerFrameDebugReport = {
+	type: SpinnerType;
+	frameMs: number;
+	sourceFrames: readonly string[];
+	visibleFrames: readonly string[];
+	mode: SpinnerFrameDebugMode;
+};
+
+export function createSpinnerFrameDebugReport(type: SpinnerType, config: SpinnerGlyphFrameOverride): SpinnerFrameDebugReport {
+	const visibleFrames = buildTimedSpinnerFrames(config.frames, config.frameMs);
+	const mode: SpinnerFrameDebugMode =
+		config.frames.length === 0
+			? "empty"
+			: visibleFrames.length === 0 || (visibleFrames.length === config.frames.length && visibleFrames.every((frame, index) => frame === config.frames[index]))
+				? "unchanged"
+				: visibleFrames.length > config.frames.length
+					? "repeated"
+					: "skipped";
+	return {
+		type,
+		frameMs: config.frameMs,
+		sourceFrames: Array.from(config.frames),
+		visibleFrames,
+		mode,
+	};
+}
+
+export function formatSpinnerFrameDebugReport(report: SpinnerFrameDebugReport): string {
+	const modeLine =
+		report.mode === "repeated"
+			? "mode: repeats frames to match 80ms host tick"
+			: report.mode === "skipped"
+				? "mode: skips source frames to match 80ms host tick"
+				: report.mode === "empty"
+					? "mode: no configured frames; host defaults will render"
+					: "mode: keeps frames unchanged at 80ms host tick";
+	const note =
+		report.mode === "skipped"
+			? "note: smooth looping must hold on the visible subsequence, not only the full source list"
+			: undefined;
+	return [
+		`Prompt loading glyphs: ${report.type}`,
+		`frameMs: ${report.frameMs}`,
+		`source (${report.sourceFrames.length}): ${report.sourceFrames.join(" ") || "<empty>"}`,
+		`visible (${report.visibleFrames.length}): ${report.visibleFrames.join(" ") || "<host defaults>"}`,
+		modeLine,
+		note,
+	]
+		.filter(Boolean)
+		.join("\n");
 }
 
 const emptySpinnerGlyphConfig = (): PromptBorderSpinnerGlyphConfig => ({
@@ -516,6 +579,41 @@ export function getPromptBorderArgumentCompletions(argumentPrefix: string): Auto
 		return LAYOUT_NAMES.filter(layout => layout.startsWith(tokenPrefix)).map(complete);
 	}
 	return null;
+}
+
+export function getPromptLoadingGlyphArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+	const normalized = argumentPrefix.toLowerCase();
+	const hasTrailingSpace = /\s$/.test(normalized);
+	const parts = normalized.trim().split(/\s+/u).filter(Boolean);
+	const tokenPrefix = hasTrailingSpace ? "" : (parts.at(-1) ?? "");
+	if (parts.length === 0) return [{ value: "debug", label: "debug" }];
+	if (parts.length === 1) {
+		if (!hasTrailingSpace) {
+			return LOADING_GLYPH_DEBUG_ROOT_OPTIONS
+				.filter(option => option.startsWith(tokenPrefix))
+				.map(option => ({ value: option, label: option }));
+		}
+		if (parts[0] === "debug") {
+			return LOADING_GLYPH_DEBUG_ACTIONS.map(action => ({ value: `debug ${action}`, label: action }));
+		}
+	}
+	if (parts[0] === "debug" && parts.length === 2 && !hasTrailingSpace) {
+		return LOADING_GLYPH_DEBUG_ACTIONS
+			.filter(action => action.startsWith(tokenPrefix))
+			.map(action => ({ value: `debug ${action}`, label: action }));
+	}
+	return null;
+}
+
+export function parsePromptLoadingGlyphArgs(args: string): PromptLoadingGlyphDebugAction {
+	const parts = args.trim().toLowerCase().split(/\s+/u).filter(Boolean);
+	if (parts.length === 2 && parts[0] === "debug") {
+		if (parts[1] === "frames") return { kind: "frames" };
+		if (parts[1] === "demo") return { kind: "demo" };
+		if (parts[1] === "on") return { kind: "on" };
+		if (parts[1] === "off") return { kind: "off" };
+	}
+	return { kind: "invalid" };
 }
 
 export function parsePromptBorderArgs(args: string, current: PromptBorderState): PromptBorderAction {
