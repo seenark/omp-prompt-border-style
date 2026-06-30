@@ -216,6 +216,16 @@ function formatAllSpinnerFrameDebugReports(config: PromptBorderConfig): string {
 	].join("\n\n");
 }
 
+export function formatPromptLoadingGlyphDemoSummary(config: PromptBorderConfig): string {
+	return [
+		"Prompt loading glyphs demo",
+		...SPINNER_GLYPH_SLOTS.map(slot => {
+			const report = createSpinnerFrameDebugReport(slot, config.spinnerGlyphs[slot]);
+			return `${slot} loading — visible (${report.visibleFrames.length}): ${report.visibleFrames.join(" ") || "<host defaults>"}`;
+		}),
+	].join("\n");
+}
+
 const emptySpinnerGlyphConfig = (): PromptBorderSpinnerGlyphConfig => ({
 	status: { frameMs: DEFAULT_SPINNER_GLYPH_FRAME_MS, glyphs: "", frames: [] },
 	activity: { frameMs: DEFAULT_SPINNER_GLYPH_FRAME_MS, glyphs: "", frames: [] },
@@ -286,9 +296,18 @@ function mountPromptLoadingGlyphDebugWidget(
 	const { setWidget } = ctx.ui;
 	setWidget("prompt-loading-glyphs-debug", (tui: unknown) => {
 		const box = new Box(1, 0);
-		box.addChild(new Text("Prompt loading glyphs demo", 0, 0));
-		box.addChild(new Loader(tui as ConstructorParameters<typeof Loader>[0], value => value, value => value, "Working…", buildTimedSpinnerFrames(config.spinnerGlyphs.status.frames, config.spinnerGlyphs.status.frameMs)));
-		box.addChild(new Loader(tui as ConstructorParameters<typeof Loader>[0], value => value, value => value, "Working…", buildTimedSpinnerFrames(config.spinnerGlyphs.activity.frames, config.spinnerGlyphs.activity.frameMs)));
+		const tuiInstance = tui as ConstructorParameters<typeof Loader>[0];
+		box.addChild(new Text(formatPromptLoadingGlyphDemoSummary(config), 0, 0));
+		for (const slot of SPINNER_GLYPH_SLOTS) {
+			const glyphConfig = config.spinnerGlyphs[slot];
+			box.addChild(new Loader(
+				tuiInstance,
+				value => value,
+				value => value,
+				`${slot} loading`,
+				buildTimedSpinnerFrames(glyphConfig.frames, glyphConfig.frameMs),
+			));
+		}
 		return box;
 	});
 	promptLoadingGlyphDebugMountedSessions.add(setWidget);

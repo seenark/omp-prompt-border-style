@@ -11,6 +11,7 @@ import promptBorderStyle, {
 	buildTimedSpinnerFrames,
 	createSpinnerFrameDebugReport,
 	ensurePromptBorderConfigFile,
+	formatPromptLoadingGlyphDemoSummary,
 	formatSpinnerFrameDebugReport,
 	getPromptBorderArgumentCompletions,
 	getPromptLoadingGlyphArgumentCompletions,
@@ -209,6 +210,25 @@ test("formats a frame debug report with the visible subsequence note", () => {
 	expect(formatted).toContain("visible (2): F0 F4");
 	expect(formatted).toContain("mode: skips source frames to match 80ms host tick");
 	expect(formatted).toContain("visible subsequence");
+});
+
+test("formats the loading glyph demo summary for every spinner group", () => {
+	const summary = formatPromptLoadingGlyphDemoSummary({
+		style: "double",
+		layout: "full",
+		leftGlyph: { frameMs: 70, glyphs: "", frames: [] },
+		rightGlyph: { frameMs: 70, glyphs: "", frames: [] },
+		spinnerGlyphs: {
+			status: { frameMs: 80, glyphs: "S0 S1", frames: ["S0", "S1"] },
+			activity: { frameMs: 20, glyphs: "F0 F1 F2 F3 F4 F5 F6 F7", frames: ["F0", "F1", "F2", "F3", "F4", "F5", "F6", "F7"] },
+		},
+	});
+
+	expect(summary).toContain("Prompt loading glyphs demo");
+	expect(summary).toContain("status loading");
+	expect(summary).toContain("visible (2): S0 S1");
+	expect(summary).toContain("activity loading");
+	expect(summary).toContain("visible (2): F0 F4");
 });
 
 describe("PromptBorderEditor", () => {

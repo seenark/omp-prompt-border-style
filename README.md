@@ -154,7 +154,9 @@ Use the dedicated loading-glyph debug command instead of spending model tokens:
 /prompt-loading-glyphs debug off
 ```
 
-`debug frames` shows the visible subsequence after `frameMs` adaptation. For example, with `frameMs = 20` a source list such as `F0 F1 F2 F3 F4 F5 F6 F7` may render as `F0 F4`, so the loop must stay smooth on that visible subsequence rather than only on the full source list.
+`debug frames` prints the source and visible frame sequence for each loading group after `frameMs` adaptation. `debug demo` renders a local no-token preview for every loading group listed by the plugin, currently `status loading` and `activity loading`.
+After editing `~/.config/codesook-omp/prompt-border-status-spinner-glyphs.txt`, `~/.config/codesook-omp/prompt-border-activity-spinner-glyphs.txt`, or the matching `spinnerGlyphs.*.frameMs` values in `~/.config/codesook-omp/config.json`, run `/prompt-loading-glyphs debug frames` first and then `/prompt-loading-glyphs debug demo` to verify the actual visible sequence and animation.
+For example, with `frameMs = 20` a source list such as `F0 F1 F2 F3 F4 F5 F6 F7` may render as `F0 F4`, so the loop must stay smooth on that visible subsequence rather than only on the full source list.
 
 ## Examples
 
