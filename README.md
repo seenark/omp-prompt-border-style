@@ -50,9 +50,10 @@ This repo exposes the extension through `omp.extensions` in `package.json`, poin
 /prompt-border <style> [layout]
 /prompt-border layout <layout>
 /prompt-border reset
+/prompt-loading-glyphs debug <frames|demo|on|off>
 ```
 
-If the arguments are invalid, the plugin shows the command usage string in the UI.
+If the arguments are invalid, the plugin shows the matching command usage string in the UI.
 
 ## Styles
 
@@ -141,6 +142,19 @@ S0  S1  S2
 Each spinner file may contain one or more whitespace-separated frames. The plugin adapts those configured frames to Oh My Pi's fixed 80ms host spinner tick by repeating frames for slower `frameMs` values and skipping source frames for faster ones. There is no plugin-imposed maximum frame count, but very high `frameMs` values duplicate frames internally, so huge source lists plus slow timings create larger in-memory spinner arrays. If a spinner file is empty or missing, that spinner group is not patched and Oh My Pi uses its built-in frames for that group.
 
 The left and right glyph files affect only the cursor/input row. They do not change border style, layout, side borders, top borders, autocomplete rows, or synthetic bottom borders.
+
+## Debugging loading glyphs
+
+Use the dedicated loading-glyph debug command instead of spending model tokens:
+
+```text
+/prompt-loading-glyphs debug frames
+/prompt-loading-glyphs debug demo
+/prompt-loading-glyphs debug on
+/prompt-loading-glyphs debug off
+```
+
+`debug frames` shows the visible subsequence after `frameMs` adaptation. For example, with `frameMs = 20` a source list such as `F0 F1 F2 F3 F4 F5 F6 F7` may render as `F0 F4`, so the loop must stay smooth on that visible subsequence rather than only on the full source list.
 
 ## Examples
 
