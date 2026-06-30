@@ -585,19 +585,31 @@ export function isBorderLayoutName(value: string): value is BorderLayoutName {
 	return (LAYOUT_NAMES as readonly string[]).includes(value);
 }
 
-let restoreSpinnerGlyphFrames: (() => void) | undefined;
+const spinnerGlyphFrameRestores = new WeakMap<Pick<Theme, "getSpinnerFrames">, () => void>();
+
+function restoreSpinnerGlyphFrames(themeInstance: Pick<Theme, "getSpinnerFrames"> | undefined): void {
+	if (themeInstance === undefined) return;
+	const restore = spinnerGlyphFrameRestores.get(themeInstance);
+	if (restore === undefined) return;
+	spinnerGlyphFrameRestores.delete(themeInstance);
+	restore();
+}
 
 function applySpinnerGlyphFrames(
 	themeInstance: Pick<Theme, "getSpinnerFrames"> | undefined,
 	config: PromptBorderConfig,
 ): void {
-	restoreSpinnerGlyphFrames?.();
-	restoreSpinnerGlyphFrames = undefined;
+	restoreSpinnerGlyphFrames(themeInstance);
 	if (themeInstance === undefined) return;
-	restoreSpinnerGlyphFrames = installSpinnerGlyphFrames(themeInstance, {
+	const restore = installSpinnerGlyphFrames(themeInstance, {
 		status: config.spinnerGlyphs.status,
 		activity: config.spinnerGlyphs.activity,
 	});
+	if (restore === undefined) {
+		spinnerGlyphFrameRestores.delete(themeInstance);
+		return;
+	}
+	spinnerGlyphFrameRestores.set(themeInstance, restore);
 }
 
 export function getPromptBorderArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
@@ -1143,8 +1155,7 @@ export default function promptBorderStyle(pi: ExtensionAPI, configPath = CONFIG_
 		if (!ctx.hasUI) return;
 		ctx.ui.setEditorComponent(undefined);
 		clearPromptLoadingGlyphDebugUi(ctx);
-		restoreSpinnerGlyphFrames?.();
-		restoreSpinnerGlyphFrames = undefined;
+		restoreSpinnerGlyphFrames(ctx.ui.theme);
 	});
 
 

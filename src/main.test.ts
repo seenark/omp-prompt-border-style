@@ -828,6 +828,100 @@ test("session start applies status and activity spinner frames to the UI theme",
 	expect(fakeTheme.getSpinnerFrames("status")).toEqual(["S0", "S1"]);
 	expect(fakeTheme.getSpinnerFrames("activity")).toEqual(["A0", "A1"]);
 });
+test("session shutdown restores spinner frames only for its own theme", async () => {
+	const dir = await mkdtemp(path.join(os.tmpdir(), "prompt-border-"));
+	const configPath = path.join(dir, "config.json");
+	await Bun.write(configPath, JSON.stringify({
+		promptBorder: {
+			style: "double",
+			layout: "full",
+			spinnerGlyphs: {
+				status: { frameMs: 80 },
+				activity: { frameMs: 80 },
+			},
+		},
+	}, null, 2));
+	await Bun.write(path.join(dir, "prompt-border-left-glyphs.txt"), "");
+	await Bun.write(path.join(dir, "prompt-border-right-glyphs.txt"), "");
+	await Bun.write(path.join(dir, "prompt-border-status-spinner-glyphs.txt"), "S0  S1");
+	await Bun.write(path.join(dir, "prompt-border-activity-spinner-glyphs.txt"), "A0  A1");
+
+	let sessionStart:
+		| ((event: unknown, ctx: {
+			hasUI: true;
+			ui: {
+				theme: { getSpinnerFrames: (type?: string) => string[] };
+				setEditorComponent: (value: unknown) => void;
+				notify: (message: string, level?: string) => void;
+			};
+		}) => Promise<void>)
+		| undefined;
+	let sessionShutdown:
+		| ((event: unknown, ctx: {
+			hasUI: true;
+			ui: {
+				theme: { getSpinnerFrames: (type?: string) => string[] };
+				setEditorComponent: (value: unknown) => void;
+				notify: (message: string, level?: string) => void;
+			};
+		}) => void)
+		| undefined;
+	const pi = {
+		setLabel: () => {},
+		on: (event: string, handler: typeof sessionStart | typeof sessionShutdown) => {
+			if (event === "session_start") sessionStart = handler as typeof sessionStart;
+			if (event === "session_shutdown") sessionShutdown = handler as typeof sessionShutdown;
+		},
+		registerCommand: () => {},
+	} as unknown as ExtensionAPI;
+	const themeOne = {
+		getSpinnerFrames(type = "status") {
+			return type === "activity" ? ["a1-0", "a1-1"] : ["s1-0", "s1-1"];
+		},
+	};
+	const themeTwo = {
+		getSpinnerFrames(type = "status") {
+			return type === "activity" ? ["a2-0", "a2-1"] : ["s2-0", "s2-1"];
+		},
+	};
+
+	promptBorderStyle(pi, configPath);
+	await sessionStart?.({}, {
+		hasUI: true,
+		ui: {
+			theme: themeOne,
+			setEditorComponent: () => {},
+			notify: () => {},
+		},
+	});
+	await sessionStart?.({}, {
+		hasUI: true,
+		ui: {
+			theme: themeTwo,
+			setEditorComponent: () => {},
+			notify: () => {},
+		},
+	});
+
+	expect(themeOne.getSpinnerFrames("status")).toEqual(["S0", "S1"]);
+	expect(themeOne.getSpinnerFrames("activity")).toEqual(["A0", "A1"]);
+	expect(themeTwo.getSpinnerFrames("status")).toEqual(["S0", "S1"]);
+	expect(themeTwo.getSpinnerFrames("activity")).toEqual(["A0", "A1"]);
+
+	sessionShutdown?.({}, {
+		hasUI: true,
+		ui: {
+			theme: themeOne,
+			setEditorComponent: () => {},
+			notify: () => {},
+		},
+	});
+
+	expect(themeOne.getSpinnerFrames("status")).toEqual(["s1-0", "s1-1"]);
+	expect(themeOne.getSpinnerFrames("activity")).toEqual(["a1-0", "a1-1"]);
+	expect(themeTwo.getSpinnerFrames("status")).toEqual(["S0", "S1"]);
+	expect(themeTwo.getSpinnerFrames("activity")).toEqual(["A0", "A1"]);
+});
 
 test("prompt-loading-glyphs exposes debug frame reports from config", async () => {
 	const dir = await mkdtemp(path.join(os.tmpdir(), "prompt-loading-glyphs-"));
