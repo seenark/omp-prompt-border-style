@@ -82,12 +82,12 @@ const STYLE_NAMES = Object.keys(borderStyles) as BorderStyleName[];
 const LAYOUT_NAMES = ["full", "bottom", "sides", "top-bottom", "default"] as const;
 const PRIMARY_COMMAND_OPTIONS = [...STYLE_NAMES, "layout", "reset"] as const;
 const USAGE = `Usage: /prompt-border <${STYLE_NAMES.join("|")}> [full|bottom|sides|top-bottom|default] | /prompt-border layout <full|bottom|sides|top-bottom|default> | /prompt-border reset`;
-const PROMPT_LOADING_GLYPHS_USAGE = "Usage: /prompt-loading-glyphs debug <frames|demo|on|off>";
+const PROMPT_LOADING_GLYPHS_USAGE = "Usage: /prompt-loading-glyphs debug <frames>";
 const DEFAULT_GLYPH_FRAME_MS = 70;
 const DEFAULT_SPINNER_GLYPH_FRAME_MS = 80;
 const HOST_SPINNER_FRAME_MS = 80;
 const LOADING_GLYPH_DEBUG_ROOT_OPTIONS = ["debug"] as const;
-const LOADING_GLYPH_DEBUG_ACTIONS = ["frames", "demo", "on", "off"] as const;
+const LOADING_GLYPH_DEBUG_ACTIONS = ["frames"] as const;
 const SPINNER_GLYPH_SLOTS = ["status", "activity"] as const satisfies readonly SpinnerType[];
 const GLYPH_TEXT_FILE_NAMES: Record<PromptBorderGlyphSlot, string> = {
 	left: "prompt-border-left-glyphs.txt",
@@ -147,9 +147,6 @@ export function buildTimedSpinnerFrames(
 
 export type PromptLoadingGlyphDebugAction =
 	| { kind: "frames" }
-	| { kind: "demo" }
-	| { kind: "on" }
-	| { kind: "off" }
 	| { kind: "invalid" };
 
 export type SpinnerFrameDebugMode = "empty" | "unchanged" | "repeated" | "skipped";
@@ -615,12 +612,7 @@ export function getPromptLoadingGlyphArgumentCompletions(argumentPrefix: string)
 
 export function parsePromptLoadingGlyphArgs(args: string): PromptLoadingGlyphDebugAction {
 	const parts = args.trim().toLowerCase().split(/\s+/u).filter(Boolean);
-	if (parts.length === 2 && parts[0] === "debug") {
-		if (parts[1] === "frames") return { kind: "frames" };
-		if (parts[1] === "demo") return { kind: "demo" };
-		if (parts[1] === "on") return { kind: "on" };
-		if (parts[1] === "off") return { kind: "off" };
-	}
+	if (parts.length === 2 && parts[0] === "debug" && parts[1] === "frames") return { kind: "frames" };
 	return { kind: "invalid" };
 }
 
@@ -1125,11 +1117,7 @@ export default function promptBorderStyle(pi: ExtensionAPI, configPath = CONFIG_
 				ctx.ui.notify(PROMPT_LOADING_GLYPHS_USAGE, "warning");
 				return;
 			}
-			if (action.kind === "frames") {
-				ctx.ui.notify(formatAllSpinnerFrameDebugReports(activeConfig), "info");
-				return;
-			}
-			ctx.ui.notify("Loading glyph debug action not implemented yet", "warning");
+			ctx.ui.notify(formatAllSpinnerFrameDebugReports(activeConfig), "info");
 		},
 	});
 	pi.registerCommand("prompt-border", {

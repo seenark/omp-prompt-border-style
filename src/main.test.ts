@@ -145,17 +145,14 @@ test("builds timed spinner frames by skipping faster source frames", () => {
 });
 
 describe("parsePromptLoadingGlyphArgs", () => {
-	test("accepts debug frames", () => {
+	test("accepts only debug frames", () => {
 		expect(parsePromptLoadingGlyphArgs("debug frames")).toEqual({ kind: "frames" });
 	});
 
-	test("accepts debug demo", () => {
-		expect(parsePromptLoadingGlyphArgs("debug demo")).toEqual({ kind: "demo" });
-	});
-
-	test("accepts debug on and off", () => {
-		expect(parsePromptLoadingGlyphArgs("debug on")).toEqual({ kind: "on" });
-		expect(parsePromptLoadingGlyphArgs("debug off")).toEqual({ kind: "off" });
+	test("rejects task-3 loading glyph commands", () => {
+		expect(parsePromptLoadingGlyphArgs("debug demo")).toEqual({ kind: "invalid" });
+		expect(parsePromptLoadingGlyphArgs("debug on")).toEqual({ kind: "invalid" });
+		expect(parsePromptLoadingGlyphArgs("debug off")).toEqual({ kind: "invalid" });
 	});
 
 	test("rejects unknown loading glyph commands", () => {
@@ -168,20 +165,15 @@ describe("getPromptLoadingGlyphArgumentCompletions", () => {
 		expect(getPromptLoadingGlyphArgumentCompletions("")).toEqual([{ value: "debug", label: "debug" }]);
 	});
 
-	test("offers debug actions after the subcommand", () => {
+	test("offers only debug frames after the subcommand", () => {
 		expect(getPromptLoadingGlyphArgumentCompletions("debug ")).toEqual([
 			{ value: "debug frames", label: "frames" },
-			{ value: "debug demo", label: "demo" },
-			{ value: "debug on", label: "on" },
-			{ value: "debug off", label: "off" },
 		]);
 	});
-	test("offers debug actions for the exact debug token", () => {
+
+	test("offers only debug frames for the exact debug token", () => {
 		expect(getPromptLoadingGlyphArgumentCompletions("debug")).toEqual([
 			{ value: "debug frames", label: "frames" },
-			{ value: "debug demo", label: "demo" },
-			{ value: "debug on", label: "on" },
-			{ value: "debug off", label: "off" },
 		]);
 	});
 });
@@ -834,7 +826,7 @@ test("session start applies status and activity spinner frames to the UI theme",
 	expect(fakeTheme.getSpinnerFrames("activity")).toEqual(["A0", "A1"]);
 });
 
-test("prompt-loading-glyphs debug frames reports adapted status and activity frames", async () => {
+test("prompt-loading-glyphs exposes only debug frames during task 2", async () => {
 	const dir = await mkdtemp(path.join(os.tmpdir(), "prompt-loading-glyphs-"));
 	const configPath = path.join(dir, "config.json");
 	await Bun.write(configPath, JSON.stringify({
@@ -862,7 +854,7 @@ test("prompt-loading-glyphs debug frames reports adapted status and activity fra
 			};
 		}) => Promise<void>)
 		| undefined;
-	const notifications: string[] = [];
+	const notifications: Array<{ message: string; level?: string }> = [];
 	const pi = {
 		setLabel: () => {},
 		on: () => {},
@@ -871,21 +863,41 @@ test("prompt-loading-glyphs debug frames reports adapted status and activity fra
 		},
 	} as unknown as ExtensionAPI;
 
-	promptBorderStyle(pi, configPath);
-	await commandHandler?.("debug frames", {
-		hasUI: true,
+	const ctx = {
+		hasUI: true as const,
 		ui: {
 			theme: { getSpinnerFrames: () => ["unused"] },
-			notify: message => {
-				notifications.push(message);
+			notify: (message: string, level?: string) => {
+				notifications.push({ message, level });
 			},
 			setEditorComponent: () => {},
 		},
+	};
+
+	promptBorderStyle(pi, configPath);
+	await commandHandler?.("debug frames", ctx);
+	expect(notifications.at(-1)?.message).toContain("Prompt loading glyphs: status");
+	expect(notifications.at(-1)?.message).toContain("Prompt loading glyphs: activity");
+	expect(notifications.at(-1)?.message).toContain("visible (2): F0 F4");
+	expect(notifications.at(-1)?.level).toBe("info");
+
+	await commandHandler?.("debug demo", ctx);
+	expect(notifications.at(-1)).toEqual({
+		message: "Usage: /prompt-loading-glyphs debug <frames>",
+		level: "warning",
 	});
 
-	expect(notifications.at(-1)).toContain("Prompt loading glyphs: status");
-	expect(notifications.at(-1)).toContain("Prompt loading glyphs: activity");
-	expect(notifications.at(-1)).toContain("visible (2): F0 F4");
+	await commandHandler?.("debug on", ctx);
+	expect(notifications.at(-1)).toEqual({
+		message: "Usage: /prompt-loading-glyphs debug <frames>",
+		level: "warning",
+	});
+
+	await commandHandler?.("debug off", ctx);
+	expect(notifications.at(-1)).toEqual({
+		message: "Usage: /prompt-loading-glyphs debug <frames>",
+		level: "warning",
+	});
 });
 
 describe("promptBorderStyle", () => {
