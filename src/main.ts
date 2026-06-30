@@ -82,6 +82,7 @@ const STYLE_NAMES = Object.keys(borderStyles) as BorderStyleName[];
 const LAYOUT_NAMES = ["full", "bottom", "sides", "top-bottom", "default"] as const;
 const PRIMARY_COMMAND_OPTIONS = [...STYLE_NAMES, "layout", "reset"] as const;
 const USAGE = `Usage: /prompt-border <${STYLE_NAMES.join("|")}> [full|bottom|sides|top-bottom|default] | /prompt-border layout <full|bottom|sides|top-bottom|default> | /prompt-border reset`;
+const PROMPT_LOADING_GLYPHS_USAGE = "Usage: /prompt-loading-glyphs debug <frames|demo|on|off>";
 const DEFAULT_GLYPH_FRAME_MS = 70;
 const DEFAULT_SPINNER_GLYPH_FRAME_MS = 80;
 const HOST_SPINNER_FRAME_MS = 80;
@@ -203,6 +204,13 @@ export function formatSpinnerFrameDebugReport(report: SpinnerFrameDebugReport): 
 	]
 		.filter(Boolean)
 		.join("\n");
+}
+
+function formatAllSpinnerFrameDebugReports(config: PromptBorderConfig): string {
+	return [
+		formatSpinnerFrameDebugReport(createSpinnerFrameDebugReport("status", config.spinnerGlyphs.status)),
+		formatSpinnerFrameDebugReport(createSpinnerFrameDebugReport("activity", config.spinnerGlyphs.activity)),
+	].join("\n\n");
 }
 
 const emptySpinnerGlyphConfig = (): PromptBorderSpinnerGlyphConfig => ({
@@ -1103,6 +1111,27 @@ export default function promptBorderStyle(pi: ExtensionAPI, configPath = CONFIG_
 		restoreSpinnerGlyphFrames = undefined;
 	});
 
+
+	pi.registerCommand("prompt-loading-glyphs", {
+		description: "Debug prompt loading glyph adaptation",
+		getArgumentCompletions: getPromptLoadingGlyphArgumentCompletions,
+		handler: async (args, ctx) => {
+			if (!ctx.hasUI) return;
+			activeConfig = await ensurePromptBorderConfigFile(configPath);
+			applySpinnerGlyphFrames(ctx.ui.theme, activeConfig);
+			notifyInvalidConfig(ctx);
+			const action = parsePromptLoadingGlyphArgs(args);
+			if (action.kind === "invalid") {
+				ctx.ui.notify(PROMPT_LOADING_GLYPHS_USAGE, "warning");
+				return;
+			}
+			if (action.kind === "frames") {
+				ctx.ui.notify(formatAllSpinnerFrameDebugReports(activeConfig), "info");
+				return;
+			}
+			ctx.ui.notify("Loading glyph debug action not implemented yet", "warning");
+		},
+	});
 	pi.registerCommand("prompt-border", {
 		description: "Change the prompt input border style",
 		getArgumentCompletions: getPromptBorderArgumentCompletions,

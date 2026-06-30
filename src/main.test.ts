@@ -834,6 +834,60 @@ test("session start applies status and activity spinner frames to the UI theme",
 	expect(fakeTheme.getSpinnerFrames("activity")).toEqual(["A0", "A1"]);
 });
 
+test("prompt-loading-glyphs debug frames reports adapted status and activity frames", async () => {
+	const dir = await mkdtemp(path.join(os.tmpdir(), "prompt-loading-glyphs-"));
+	const configPath = path.join(dir, "config.json");
+	await Bun.write(configPath, JSON.stringify({
+		promptBorder: {
+			style: "double",
+			layout: "full",
+			spinnerGlyphs: {
+				status: { frameMs: 80 },
+				activity: { frameMs: 20 },
+			},
+		},
+	}, null, 2));
+	await Bun.write(path.join(dir, "prompt-border-left-glyphs.txt"), "");
+	await Bun.write(path.join(dir, "prompt-border-right-glyphs.txt"), "");
+	await Bun.write(path.join(dir, "prompt-border-status-spinner-glyphs.txt"), "S0  S1");
+	await Bun.write(path.join(dir, "prompt-border-activity-spinner-glyphs.txt"), "F0  F1  F2  F3  F4  F5  F6  F7");
+
+	let commandHandler:
+		| ((args: string, ctx: {
+			hasUI: true;
+			ui: {
+				theme: { getSpinnerFrames: (type?: string) => string[] };
+				notify: (message: string, level?: string) => void;
+				setEditorComponent: (value: unknown) => void;
+			};
+		}) => Promise<void>)
+		| undefined;
+	const notifications: string[] = [];
+	const pi = {
+		setLabel: () => {},
+		on: () => {},
+		registerCommand: (name: string, command: { handler: typeof commandHandler }) => {
+			if (name === "prompt-loading-glyphs") commandHandler = command.handler;
+		},
+	} as unknown as ExtensionAPI;
+
+	promptBorderStyle(pi, configPath);
+	await commandHandler?.("debug frames", {
+		hasUI: true,
+		ui: {
+			theme: { getSpinnerFrames: () => ["unused"] },
+			notify: message => {
+				notifications.push(message);
+			},
+			setEditorComponent: () => {},
+		},
+	});
+
+	expect(notifications.at(-1)).toContain("Prompt loading glyphs: status");
+	expect(notifications.at(-1)).toContain("Prompt loading glyphs: activity");
+	expect(notifications.at(-1)).toContain("visible (2): F0 F4");
+});
+
 describe("promptBorderStyle", () => {
 	test("reset restores the default full layout for later style-only commands", async () => {
 		let handler: ((args: string, ctx: { hasUI: true; ui: { setEditorComponent: (value: unknown) => void; notify: (message: string) => void } }) => Promise<void>) | undefined;
