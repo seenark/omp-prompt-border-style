@@ -1,10 +1,13 @@
-import { CustomEditor, type ExtensionAPI, type SpinnerType, type Theme } from "@oh-my-pi/pi-coding-agent";
+import { CustomEditor, type ExtensionAPI, type ExtensionUIContext, type SpinnerType, type Theme } from "@oh-my-pi/pi-coding-agent";
 import { mkdir } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+	Box,
 	CURSOR_MARKER,
+	Loader,
 	sliceByColumn,
+	Text,
 	truncateToWidth,
 	visibleWidth,
 	type AutocompleteItem,
@@ -82,12 +85,12 @@ const STYLE_NAMES = Object.keys(borderStyles) as BorderStyleName[];
 const LAYOUT_NAMES = ["full", "bottom", "sides", "top-bottom", "default"] as const;
 const PRIMARY_COMMAND_OPTIONS = [...STYLE_NAMES, "layout", "reset"] as const;
 const USAGE = `Usage: /prompt-border <${STYLE_NAMES.join("|")}> [full|bottom|sides|top-bottom|default] | /prompt-border layout <full|bottom|sides|top-bottom|default> | /prompt-border reset`;
-const PROMPT_LOADING_GLYPHS_USAGE = "Usage: /prompt-loading-glyphs debug <frames>";
+const PROMPT_LOADING_GLYPHS_USAGE = "Usage: /prompt-loading-glyphs debug <frames|demo|on|off>";
 const DEFAULT_GLYPH_FRAME_MS = 70;
 const DEFAULT_SPINNER_GLYPH_FRAME_MS = 80;
 const HOST_SPINNER_FRAME_MS = 80;
 const LOADING_GLYPH_DEBUG_ROOT_OPTIONS = ["debug"] as const;
-const LOADING_GLYPH_DEBUG_ACTIONS = ["frames"] as const;
+const LOADING_GLYPH_DEBUG_ACTIONS = ["frames", "demo", "on", "off"] as const;
 const SPINNER_GLYPH_SLOTS = ["status", "activity"] as const satisfies readonly SpinnerType[];
 const GLYPH_TEXT_FILE_NAMES: Record<PromptBorderGlyphSlot, string> = {
 	left: "prompt-border-left-glyphs.txt",
@@ -147,6 +150,9 @@ export function buildTimedSpinnerFrames(
 
 export type PromptLoadingGlyphDebugAction =
 	| { kind: "frames" }
+	| { kind: "demo" }
+	| { kind: "on" }
+	| { kind: "off" }
 	| { kind: "invalid" };
 
 export type SpinnerFrameDebugMode = "empty" | "unchanged" | "repeated" | "skipped";
@@ -247,11 +253,43 @@ export type PromptBorderAction =
 let activeBorder: PromptBorderState = { style: "double", layout: "full" };
 let activeConfig: PromptBorderConfig = DEFAULT_PROMPT_BORDER_CONFIG;
 let didReadInvalidConfig = false;
+let promptLoadingGlyphDebugEnabled = false;
+let promptLoadingGlyphDebugMounted = false;
 const CONFIG_PARSE_WARNING = `Prompt border config at ${CONFIG_PATH} is invalid JSON; using defaults without overwriting the file.`;
 
 function notifyInvalidConfig(ctx: { ui: { notify: (message: string, level?: "info" | "warning" | "error") => void } }): void {
 	if (!didReadInvalidConfig) return;
 	ctx.ui.notify(CONFIG_PARSE_WARNING, "warning");
+}
+function buildPromptLoadingGlyphDebugMessage(config: PromptBorderConfig): string {
+	const statusReport = createSpinnerFrameDebugReport("status", config.spinnerGlyphs.status);
+	const activityReport = createSpinnerFrameDebugReport("activity", config.spinnerGlyphs.activity);
+	return `[status ${statusReport.visibleFrames.length}/${statusReport.sourceFrames.length}] [activity ${activityReport.visibleFrames.length}/${activityReport.sourceFrames.length}] Working…`;
+}
+
+function clearPromptLoadingGlyphDebugUi(ctx: { ui: Pick<ExtensionUIContext, "setWidget" | "setWorkingMessage"> }): void {
+	if (promptLoadingGlyphDebugMounted) {
+		ctx.ui.setWidget("prompt-loading-glyphs-debug", undefined);
+	}
+	if (promptLoadingGlyphDebugEnabled) {
+		ctx.ui.setWorkingMessage();
+	}
+	promptLoadingGlyphDebugMounted = false;
+	promptLoadingGlyphDebugEnabled = false;
+}
+
+function mountPromptLoadingGlyphDebugWidget(
+	ctx: { ui: Pick<ExtensionUIContext, "setWidget"> },
+	config: PromptBorderConfig,
+): void {
+	ctx.ui.setWidget("prompt-loading-glyphs-debug", (tui: unknown) => {
+		const box = new Box(1, 0);
+		box.addChild(new Text("Prompt loading glyphs demo", 0, 0));
+		box.addChild(new Loader(tui as ConstructorParameters<typeof Loader>[0], value => value, value => value, "Working…", buildTimedSpinnerFrames(config.spinnerGlyphs.status.frames, config.spinnerGlyphs.status.frameMs)));
+		box.addChild(new Loader(tui as ConstructorParameters<typeof Loader>[0], value => value, value => value, "Working…", buildTimedSpinnerFrames(config.spinnerGlyphs.activity.frames, config.spinnerGlyphs.activity.frameMs)));
+		return box;
+	});
+	promptLoadingGlyphDebugMounted = true;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -613,6 +651,9 @@ export function getPromptLoadingGlyphArgumentCompletions(argumentPrefix: string)
 export function parsePromptLoadingGlyphArgs(args: string): PromptLoadingGlyphDebugAction {
 	const parts = args.trim().toLowerCase().split(/\s+/u).filter(Boolean);
 	if (parts.length === 2 && parts[0] === "debug" && parts[1] === "frames") return { kind: "frames" };
+	if (parts.length === 2 && parts[0] === "debug" && parts[1] === "demo") return { kind: "demo" };
+	if (parts.length === 2 && parts[0] === "debug" && parts[1] === "on") return { kind: "on" };
+	if (parts.length === 2 && parts[0] === "debug" && parts[1] === "off") return { kind: "off" };
 	return { kind: "invalid" };
 }
 
@@ -1099,6 +1140,7 @@ export default function promptBorderStyle(pi: ExtensionAPI, configPath = CONFIG_
 	pi.on("session_shutdown", (_event, ctx) => {
 		if (!ctx.hasUI) return;
 		ctx.ui.setEditorComponent(undefined);
+		clearPromptLoadingGlyphDebugUi(ctx);
 		restoreSpinnerGlyphFrames?.();
 		restoreSpinnerGlyphFrames = undefined;
 	});
@@ -1117,7 +1159,23 @@ export default function promptBorderStyle(pi: ExtensionAPI, configPath = CONFIG_
 				ctx.ui.notify(PROMPT_LOADING_GLYPHS_USAGE, "warning");
 				return;
 			}
-			ctx.ui.notify(formatAllSpinnerFrameDebugReports(activeConfig), "info");
+			if (action.kind === "frames") {
+				ctx.ui.notify(formatAllSpinnerFrameDebugReports(activeConfig), "info");
+				return;
+			}
+			if (action.kind === "demo") {
+				mountPromptLoadingGlyphDebugWidget(ctx, activeConfig);
+				ctx.ui.notify("Prompt loading glyph demo enabled", "info");
+				return;
+			}
+			if (action.kind === "on") {
+				promptLoadingGlyphDebugEnabled = true;
+				ctx.ui.setWorkingMessage(buildPromptLoadingGlyphDebugMessage(activeConfig));
+				ctx.ui.notify("Prompt loading glyph debug enabled", "info");
+				return;
+			}
+			clearPromptLoadingGlyphDebugUi(ctx);
+			ctx.ui.notify("Prompt loading glyph debug disabled", "info");
 		},
 	});
 	pi.registerCommand("prompt-border", {

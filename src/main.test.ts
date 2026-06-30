@@ -145,14 +145,11 @@ test("builds timed spinner frames by skipping faster source frames", () => {
 });
 
 describe("parsePromptLoadingGlyphArgs", () => {
-	test("accepts only debug frames", () => {
+	test("accepts the prompt-loading glyph debug actions", () => {
 		expect(parsePromptLoadingGlyphArgs("debug frames")).toEqual({ kind: "frames" });
-	});
-
-	test("rejects task-3 loading glyph commands", () => {
-		expect(parsePromptLoadingGlyphArgs("debug demo")).toEqual({ kind: "invalid" });
-		expect(parsePromptLoadingGlyphArgs("debug on")).toEqual({ kind: "invalid" });
-		expect(parsePromptLoadingGlyphArgs("debug off")).toEqual({ kind: "invalid" });
+		expect(parsePromptLoadingGlyphArgs("debug demo")).toEqual({ kind: "demo" });
+		expect(parsePromptLoadingGlyphArgs("debug on")).toEqual({ kind: "on" });
+		expect(parsePromptLoadingGlyphArgs("debug off")).toEqual({ kind: "off" });
 	});
 
 	test("rejects unknown loading glyph commands", () => {
@@ -165,15 +162,21 @@ describe("getPromptLoadingGlyphArgumentCompletions", () => {
 		expect(getPromptLoadingGlyphArgumentCompletions("")).toEqual([{ value: "debug", label: "debug" }]);
 	});
 
-	test("offers only debug frames after the subcommand", () => {
+	test("offers all task-3 loading glyph actions after the subcommand", () => {
 		expect(getPromptLoadingGlyphArgumentCompletions("debug ")).toEqual([
 			{ value: "debug frames", label: "frames" },
+			{ value: "debug demo", label: "demo" },
+			{ value: "debug on", label: "on" },
+			{ value: "debug off", label: "off" },
 		]);
 	});
 
-	test("offers only debug frames for the exact debug token", () => {
+	test("offers matching loading glyph actions for the exact debug token", () => {
 		expect(getPromptLoadingGlyphArgumentCompletions("debug")).toEqual([
 			{ value: "debug frames", label: "frames" },
+			{ value: "debug demo", label: "demo" },
+			{ value: "debug on", label: "on" },
+			{ value: "debug off", label: "off" },
 		]);
 	});
 });
@@ -826,7 +829,7 @@ test("session start applies status and activity spinner frames to the UI theme",
 	expect(fakeTheme.getSpinnerFrames("activity")).toEqual(["A0", "A1"]);
 });
 
-test("prompt-loading-glyphs exposes only debug frames during task 2", async () => {
+test("prompt-loading-glyphs exposes debug frame reports from config", async () => {
 	const dir = await mkdtemp(path.join(os.tmpdir(), "prompt-loading-glyphs-"));
 	const configPath = path.join(dir, "config.json");
 	await Bun.write(configPath, JSON.stringify({
@@ -851,6 +854,8 @@ test("prompt-loading-glyphs exposes only debug frames during task 2", async () =
 				theme: { getSpinnerFrames: (type?: string) => string[] };
 				notify: (message: string, level?: string) => void;
 				setEditorComponent: (value: unknown) => void;
+				setWidget: (key: string, value: unknown) => void;
+				setWorkingMessage: (message?: string) => void;
 			};
 		}) => Promise<void>)
 		| undefined;
@@ -871,6 +876,8 @@ test("prompt-loading-glyphs exposes only debug frames during task 2", async () =
 				notifications.push({ message, level });
 			},
 			setEditorComponent: () => {},
+			setWidget: () => {},
+			setWorkingMessage: () => {},
 		},
 	};
 
@@ -880,24 +887,136 @@ test("prompt-loading-glyphs exposes only debug frames during task 2", async () =
 	expect(notifications.at(-1)?.message).toContain("Prompt loading glyphs: activity");
 	expect(notifications.at(-1)?.message).toContain("visible (2): F0 F4");
 	expect(notifications.at(-1)?.level).toBe("info");
+});
 
-	await commandHandler?.("debug demo", ctx);
-	expect(notifications.at(-1)).toEqual({
-		message: "Usage: /prompt-loading-glyphs debug <frames>",
-		level: "warning",
+test("prompt-loading-glyphs debug demo mounts a widget without calling the model", async () => {
+	let commandHandler: ((args: string, ctx: {
+		hasUI: true;
+		ui: {
+			theme: { getSpinnerFrames: (type?: string) => string[] };
+			notify: (message: string, level?: string) => void;
+			setEditorComponent: (value: unknown) => void;
+			setWidget: (key: string, value: unknown) => void;
+			setWorkingMessage: (message?: string) => void;
+		};
+	}) => Promise<void>) | undefined;
+	const widgetCalls: Array<{ key: string; value: unknown }> = [];
+	const pi = {
+		setLabel: () => {},
+		on: () => {},
+		registerCommand: (name: string, command: { handler: typeof commandHandler }) => {
+			if (name === "prompt-loading-glyphs") commandHandler = command.handler;
+		},
+	} as unknown as ExtensionAPI;
+
+	promptBorderStyle(pi);
+	await commandHandler?.("debug demo", {
+		hasUI: true,
+		ui: {
+			theme: { getSpinnerFrames: (type = "status") => type === "activity" ? ["A0", "A1"] : ["S0", "S1"] },
+			notify: () => {},
+			setEditorComponent: () => {},
+			setWidget: (key, value) => widgetCalls.push({ key, value }),
+			setWorkingMessage: () => {},
+		},
 	});
 
-	await commandHandler?.("debug on", ctx);
-	expect(notifications.at(-1)).toEqual({
-		message: "Usage: /prompt-loading-glyphs debug <frames>",
-		level: "warning",
+	expect(widgetCalls.at(-1)?.key).toBe("prompt-loading-glyphs-debug");
+	expect(widgetCalls.at(-1)?.value).toBeTruthy();
+});
+
+test("prompt-loading-glyphs debug on and off set and clear the working message", async () => {
+	let commandHandler: ((args: string, ctx: {
+		hasUI: true;
+		ui: {
+			theme: { getSpinnerFrames: (type?: string) => string[] };
+			notify: (message: string, level?: string) => void;
+			setEditorComponent: (value: unknown) => void;
+			setWidget: (key: string, value: unknown) => void;
+			setWorkingMessage: (message?: string) => void;
+		};
+	}) => Promise<void>) | undefined;
+	const workingMessages: Array<string | undefined> = [];
+	const pi = {
+		setLabel: () => {},
+		on: () => {},
+		registerCommand: (name: string, command: { handler: typeof commandHandler }) => {
+			if (name === "prompt-loading-glyphs") commandHandler = command.handler;
+		},
+	} as unknown as ExtensionAPI;
+
+	promptBorderStyle(pi);
+	const ui = {
+		theme: { getSpinnerFrames: (type = "status") => type === "activity" ? ["A0", "A1"] : ["S0", "S1"] },
+		notify: () => {},
+		setEditorComponent: () => {},
+		setWidget: () => {},
+		setWorkingMessage: (message?: string) => workingMessages.push(message),
+	};
+
+	await commandHandler?.("debug on", { hasUI: true, ui });
+	await commandHandler?.("debug off", { hasUI: true, ui });
+
+	expect(workingMessages.at(0)).toContain("[");
+	expect(workingMessages.at(-1)).toBeUndefined();
+});
+
+test("session shutdown clears prompt-loading glyph debug UI state", async () => {
+	let commandHandler:
+		| ((args: string, ctx: {
+			hasUI: true;
+			ui: {
+				theme: { getSpinnerFrames: (type?: string) => string[] };
+				notify: (message: string, level?: string) => void;
+				setEditorComponent: (value: unknown) => void;
+				setWidget: (key: string, value: unknown) => void;
+				setWorkingMessage: (message?: string) => void;
+			};
+		}) => Promise<void>)
+		| undefined;
+	let shutdownHandler:
+		| ((event: unknown, ctx: {
+			hasUI: true;
+			ui: {
+				setEditorComponent: (value: unknown) => void;
+				setWidget: (key: string, value: unknown) => void;
+				setWorkingMessage: (message?: string) => void;
+			};
+		}) => void)
+		| undefined;
+	const widgetCalls: Array<{ key: string; value: unknown }> = [];
+	const workingMessages: Array<string | undefined> = [];
+	const pi = {
+		setLabel: () => {},
+		on: (event: string, handler: typeof shutdownHandler) => {
+			if (event === "session_shutdown") shutdownHandler = handler;
+		},
+		registerCommand: (name: string, command: { handler: typeof commandHandler }) => {
+			if (name === "prompt-loading-glyphs") commandHandler = command.handler;
+		},
+	} as unknown as ExtensionAPI;
+	const ui = {
+		theme: { getSpinnerFrames: (type = "status") => type === "activity" ? ["A0", "A1"] : ["S0", "S1"] },
+		notify: () => {},
+		setEditorComponent: () => {},
+		setWidget: (key: string, value: unknown) => widgetCalls.push({ key, value }),
+		setWorkingMessage: (message?: string) => workingMessages.push(message),
+	};
+
+	promptBorderStyle(pi);
+	await commandHandler?.("debug demo", { hasUI: true, ui });
+	await commandHandler?.("debug on", { hasUI: true, ui });
+	shutdownHandler?.({}, {
+		hasUI: true,
+		ui: {
+			setEditorComponent: () => {},
+			setWidget: (key: string, value: unknown) => widgetCalls.push({ key, value }),
+			setWorkingMessage: (message?: string) => workingMessages.push(message),
+		},
 	});
 
-	await commandHandler?.("debug off", ctx);
-	expect(notifications.at(-1)).toEqual({
-		message: "Usage: /prompt-loading-glyphs debug <frames>",
-		level: "warning",
-	});
+	expect(widgetCalls.at(-1)).toEqual({ key: "prompt-loading-glyphs-debug", value: undefined });
+	expect(workingMessages.at(-1)).toBeUndefined();
 });
 
 describe("promptBorderStyle", () => {
