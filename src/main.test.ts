@@ -1006,17 +1006,106 @@ test("session shutdown clears prompt-loading glyph debug UI state", async () => 
 	promptBorderStyle(pi);
 	await commandHandler?.("debug demo", { hasUI: true, ui });
 	await commandHandler?.("debug on", { hasUI: true, ui });
-	shutdownHandler?.({}, {
-		hasUI: true,
-		ui: {
-			setEditorComponent: () => {},
-			setWidget: (key: string, value: unknown) => widgetCalls.push({ key, value }),
-			setWorkingMessage: (message?: string) => workingMessages.push(message),
-		},
-	});
+	shutdownHandler?.({}, { hasUI: true, ui });
 
 	expect(widgetCalls.at(-1)).toEqual({ key: "prompt-loading-glyphs-debug", value: undefined });
 	expect(workingMessages.at(-1)).toBeUndefined();
+});
+
+test("prompt-loading-glyphs debug off only clears the current session state", async () => {
+	let commandHandler: ((args: string, ctx: {
+		hasUI: true;
+		ui: {
+			theme: { getSpinnerFrames: (type?: string) => string[] };
+			notify: (message: string, level?: string) => void;
+			setEditorComponent: (value: unknown) => void;
+			setWidget: (key: string, value: unknown) => void;
+			setWorkingMessage: (message?: string) => void;
+		};
+	}) => Promise<void>) | undefined;
+	const workingMessagesA: Array<string | undefined> = [];
+	const workingMessagesB: Array<string | undefined> = [];
+	const pi = {
+		setLabel: () => {},
+		on: () => {},
+		registerCommand: (name: string, command: { handler: typeof commandHandler }) => {
+			if (name === "prompt-loading-glyphs") commandHandler = command.handler;
+		},
+	} as unknown as ExtensionAPI;
+	const createUi = (workingMessages: Array<string | undefined>) => ({
+		theme: { getSpinnerFrames: (type = "status") => type === "activity" ? ["A0", "A1"] : ["S0", "S1"] },
+		notify: () => {},
+		setEditorComponent: () => {},
+		setWidget: () => {},
+		setWorkingMessage: (message?: string) => workingMessages.push(message),
+	});
+	const uiA = createUi(workingMessagesA);
+	const uiB = createUi(workingMessagesB);
+
+	promptBorderStyle(pi);
+	await commandHandler?.("debug on", { hasUI: true, ui: uiA });
+	await commandHandler?.("debug on", { hasUI: true, ui: uiB });
+	await commandHandler?.("debug off", { hasUI: true, ui: uiA });
+	await commandHandler?.("debug off", { hasUI: true, ui: uiB });
+
+	expect(workingMessagesA.at(-1)).toBeUndefined();
+	expect(workingMessagesB.at(0)).toContain("[");
+	expect(workingMessagesB.at(-1)).toBeUndefined();
+});
+
+test("session shutdown only clears prompt-loading glyph debug UI for that session", async () => {
+	let commandHandler:
+		| ((args: string, ctx: {
+			hasUI: true;
+			ui: {
+				theme: { getSpinnerFrames: (type?: string) => string[] };
+				notify: (message: string, level?: string) => void;
+				setEditorComponent: (value: unknown) => void;
+				setWidget: (key: string, value: unknown) => void;
+				setWorkingMessage: (message?: string) => void;
+			};
+		}) => Promise<void>)
+		| undefined;
+	let shutdownHandler:
+		| ((event: unknown, ctx: {
+			hasUI: true;
+			ui: {
+				setEditorComponent: (value: unknown) => void;
+				setWidget: (key: string, value: unknown) => void;
+				setWorkingMessage: (message?: string) => void;
+			};
+		}) => void)
+		| undefined;
+	const widgetCallsA: Array<{ key: string; value: unknown }> = [];
+	const widgetCallsB: Array<{ key: string; value: unknown }> = [];
+	const pi = {
+		setLabel: () => {},
+		on: (event: string, handler: typeof shutdownHandler) => {
+			if (event === "session_shutdown") shutdownHandler = handler;
+		},
+		registerCommand: (name: string, command: { handler: typeof commandHandler }) => {
+			if (name === "prompt-loading-glyphs") commandHandler = command.handler;
+		},
+	} as unknown as ExtensionAPI;
+	const createUi = (widgetCalls: Array<{ key: string; value: unknown }>) => ({
+		theme: { getSpinnerFrames: (type = "status") => type === "activity" ? ["A0", "A1"] : ["S0", "S1"] },
+		notify: () => {},
+		setEditorComponent: () => {},
+		setWidget: (key: string, value: unknown) => widgetCalls.push({ key, value }),
+		setWorkingMessage: () => {},
+	});
+	const uiA = createUi(widgetCallsA);
+	const uiB = createUi(widgetCallsB);
+
+	promptBorderStyle(pi);
+	await commandHandler?.("debug demo", { hasUI: true, ui: uiA });
+	await commandHandler?.("debug demo", { hasUI: true, ui: uiB });
+	shutdownHandler?.({}, { hasUI: true, ui: uiA });
+	shutdownHandler?.({}, { hasUI: true, ui: uiB });
+
+	expect(widgetCallsA.at(-1)).toEqual({ key: "prompt-loading-glyphs-debug", value: undefined });
+	expect(widgetCallsB.at(0)).toEqual({ key: "prompt-loading-glyphs-debug", value: expect.any(Function) });
+	expect(widgetCallsB.at(-1)).toEqual({ key: "prompt-loading-glyphs-debug", value: undefined });
 });
 
 describe("promptBorderStyle", () => {

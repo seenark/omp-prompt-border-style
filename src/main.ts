@@ -253,8 +253,8 @@ export type PromptBorderAction =
 let activeBorder: PromptBorderState = { style: "double", layout: "full" };
 let activeConfig: PromptBorderConfig = DEFAULT_PROMPT_BORDER_CONFIG;
 let didReadInvalidConfig = false;
-let promptLoadingGlyphDebugEnabled = false;
-let promptLoadingGlyphDebugMounted = false;
+const promptLoadingGlyphDebugEnabledSessions = new WeakSet<ExtensionUIContext["setWorkingMessage"]>();
+const promptLoadingGlyphDebugMountedSessions = new WeakSet<ExtensionUIContext["setWidget"]>();
 const CONFIG_PARSE_WARNING = `Prompt border config at ${CONFIG_PATH} is invalid JSON; using defaults without overwriting the file.`;
 
 function notifyInvalidConfig(ctx: { ui: { notify: (message: string, level?: "info" | "warning" | "error") => void } }): void {
@@ -268,28 +268,30 @@ function buildPromptLoadingGlyphDebugMessage(config: PromptBorderConfig): string
 }
 
 function clearPromptLoadingGlyphDebugUi(ctx: { ui: Pick<ExtensionUIContext, "setWidget" | "setWorkingMessage"> }): void {
-	if (promptLoadingGlyphDebugMounted) {
-		ctx.ui.setWidget("prompt-loading-glyphs-debug", undefined);
+	const { setWidget, setWorkingMessage } = ctx.ui;
+	if (promptLoadingGlyphDebugMountedSessions.has(setWidget)) {
+		setWidget("prompt-loading-glyphs-debug", undefined);
+		promptLoadingGlyphDebugMountedSessions.delete(setWidget);
 	}
-	if (promptLoadingGlyphDebugEnabled) {
-		ctx.ui.setWorkingMessage();
+	if (promptLoadingGlyphDebugEnabledSessions.has(setWorkingMessage)) {
+		setWorkingMessage();
+		promptLoadingGlyphDebugEnabledSessions.delete(setWorkingMessage);
 	}
-	promptLoadingGlyphDebugMounted = false;
-	promptLoadingGlyphDebugEnabled = false;
 }
 
 function mountPromptLoadingGlyphDebugWidget(
 	ctx: { ui: Pick<ExtensionUIContext, "setWidget"> },
 	config: PromptBorderConfig,
 ): void {
-	ctx.ui.setWidget("prompt-loading-glyphs-debug", (tui: unknown) => {
+	const { setWidget } = ctx.ui;
+	setWidget("prompt-loading-glyphs-debug", (tui: unknown) => {
 		const box = new Box(1, 0);
 		box.addChild(new Text("Prompt loading glyphs demo", 0, 0));
 		box.addChild(new Loader(tui as ConstructorParameters<typeof Loader>[0], value => value, value => value, "Working…", buildTimedSpinnerFrames(config.spinnerGlyphs.status.frames, config.spinnerGlyphs.status.frameMs)));
 		box.addChild(new Loader(tui as ConstructorParameters<typeof Loader>[0], value => value, value => value, "Working…", buildTimedSpinnerFrames(config.spinnerGlyphs.activity.frames, config.spinnerGlyphs.activity.frameMs)));
 		return box;
 	});
-	promptLoadingGlyphDebugMounted = true;
+	promptLoadingGlyphDebugMountedSessions.add(setWidget);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1169,7 +1171,7 @@ export default function promptBorderStyle(pi: ExtensionAPI, configPath = CONFIG_
 				return;
 			}
 			if (action.kind === "on") {
-				promptLoadingGlyphDebugEnabled = true;
+				promptLoadingGlyphDebugEnabledSessions.add(ctx.ui.setWorkingMessage);
 				ctx.ui.setWorkingMessage(buildPromptLoadingGlyphDebugMessage(activeConfig));
 				ctx.ui.notify("Prompt loading glyph debug enabled", "info");
 				return;
