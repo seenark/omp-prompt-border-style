@@ -17,21 +17,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: 24
           registry-url: "https://registry.npmjs.org"
-          cache: "pnpm"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: Set package version from git tag
         run: |
@@ -41,9 +37,9 @@ jobs:
 
       - name: Run checks
         run: |
-          pnpm run lint
-          pnpm run test
-          pnpm run build
+          bun run lint
+          bun run test
+          bun run build
 
       - name: Check package contents
         run: npm pack --dry-run
