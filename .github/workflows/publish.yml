@@ -1,0 +1,54 @@
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+          cache: "pnpm"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Set package version from git tag
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          npm pkg set version=$VERSION
+          echo "Publishing version $VERSION"
+
+      - name: Run checks
+        run: |
+          pnpm run lint
+          pnpm run test
+          pnpm run build
+
+      - name: Check package contents
+        run: npm pack --dry-run
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

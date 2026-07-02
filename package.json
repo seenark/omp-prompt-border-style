@@ -1,6 +1,7 @@
 {
     "name": "@codesook/omp-prompt-border-style",
     "version": "1.0.1",
+    "packageManager": "pnpm@11.0.0",
     "type": "module",
     "description": "Prompt input border styles for oh-my-pi",
     "license": "MIT",
@@ -10,7 +11,12 @@
     ],
     "scripts": {
         "check": "bun --bun tsc --noEmit",
-        "test": "bun test src/main.test.ts"
+        "test": "bun test src/main.test.ts",
+        "lint": "bun --bun tsc --noEmit",
+        "build": "bun --bun tsc --noEmit"
+    },
+    "publishConfig": {
+        "access": "public"
     },
     "peerDependencies": {
         "@oh-my-pi/pi-coding-agent": ">=16.1.7",
